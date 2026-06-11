@@ -16,3 +16,7 @@ spring:
   cloud:
     vault:
       enabled: false
+      uri: http://localhost:19999
+
+cors:
+  allowed-origins: http://localhost:5173

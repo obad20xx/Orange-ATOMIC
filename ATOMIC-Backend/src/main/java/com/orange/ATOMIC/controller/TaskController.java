@@ -32,14 +32,14 @@ public class TaskController {
     
     @PutMapping("/{taskId}/status")
     public ResponseEntity<TaskResponseDto> updateTaskStatus(
-        @PathVariable UUID taskId,
+        @PathVariable("taskId") UUID taskId,
         @Valid @RequestBody UpdateTaskStatusRequestDto request
     ) {
         return ResponseEntity.ok(taskService.updateTaskStatus(taskId, request));
     }
     
     @DeleteMapping("/{taskId}")
-    public ResponseEntity<Void> deleteTask(@PathVariable UUID taskId) {
+    public ResponseEntity<Void> deleteTask(@PathVariable("taskId") UUID taskId) {
         taskService.deleteTask(taskId);
         return ResponseEntity.noContent().build();
     }
