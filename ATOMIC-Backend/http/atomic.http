@@ -1,0 +1,168 @@
+### ATOMIC Backend - Manual API Tests
+### Base URL: http://localhost:8080
+### Run `./gradlew bootRun` before executing these requests
+
+@baseUrl = http://localhost:8080
+@contentType = application/json
+
+### -----------------------------------------
+### Tasks
+### -----------------------------------------
+
+### [1] Get all tasks (empty on fresh start)
+GET {{baseUrl}}/api/tasks
+Accept: application/json
+
+###
+
+### [2] Create a new task (success)
+# @name createdTask
+POST {{baseUrl}}/api/tasks
+Content-Type: {{contentType}}
+
+{
+  "title": "Design login screen",
+  "description": "Create wireframe and implement Vue3 login component",
+  "createdBy": "alice"
+}
+
+###
+
+### [3] Create a second task
+# @name secondTask
+POST {{baseUrl}}/api/tasks
+Content-Type: {{contentType}}
+
+{
+  "title": "Set up CI pipeline",
+  "description": "Configure GitHub Actions for build and test",
+  "createdBy": "bob"
+}
+
+###
+
+### [4] Get all tasks (should now have 2)
+GET {{baseUrl}}/api/tasks
+Accept: application/json
+
+###
+
+### [5] Update task status — replace {taskId} with an id from response above
+PUT {{baseUrl}}/api/tasks/00000000-0000-0000-0000-000000000000/status
+Content-Type: {{contentType}}
+
+{
+  "status": "IN_PROGRESS",
+  "lastModifiedBy": "alice"
+}
+
+###
+
+### [6] Update task status to COMPLETED
+PUT {{baseUrl}}/api/tasks/00000000-0000-0000-0000-000000000000/status
+Content-Type: {{contentType}}
+
+{
+  "status": "COMPLETED",
+  "lastModifiedBy": "bob"
+}
+
+###
+
+### [7] Update task status to CANCELLED
+PUT {{baseUrl}}/api/tasks/00000000-0000-0000-0000-000000000000/status
+Content-Type: {{contentType}}
+
+{
+  "status": "CANCELLED",
+  "lastModifiedBy": "alice"
+}
+
+###
+
+### [8] Delete a task — replace {taskId} with a real id
+DELETE {{baseUrl}}/api/tasks/00000000-0000-0000-0000-000000000000
+Accept: application/json
+
+###
+
+### -----------------------------------------
+### Validation Error Cases
+### -----------------------------------------
+
+### [9] Create task — missing required title (expects 400 + fieldErrors)
+POST {{baseUrl}}/api/tasks
+Content-Type: {{contentType}}
+
+{
+  "description": "No title provided",
+  "createdBy": "alice"
+}
+
+###
+
+### [10] Create task — missing createdBy (expects 400 + fieldErrors)
+POST {{baseUrl}}/api/tasks
+Content-Type: {{contentType}}
+
+{
+  "title": "Valid title but no createdBy"
+}
+
+###
+
+### [11] Update status — missing lastModifiedBy (expects 400 + fieldErrors)
+PUT {{baseUrl}}/api/tasks/00000000-0000-0000-0000-000000000000/status
+Content-Type: {{contentType}}
+
+{
+  "status": "IN_PROGRESS"
+}
+
+###
+
+### -----------------------------------------
+### Not Found Cases
+### -----------------------------------------
+
+### [12] Update status on non-existent task (expects 404)
+PUT {{baseUrl}}/api/tasks/ffffffff-ffff-ffff-ffff-ffffffffffff/status
+Content-Type: {{contentType}}
+
+{
+  "status": "IN_PROGRESS",
+  "lastModifiedBy": "alice"
+}
+
+###
+
+### [13] Delete non-existent task (expects 404)
+DELETE {{baseUrl}}/api/tasks/ffffffff-ffff-ffff-ffff-ffffffffffff
+
+###
+
+### -----------------------------------------
+### Vault / Infos
+### -----------------------------------------
+
+### [14] Get Vault info (returns fallback when Vault is not running)
+GET {{baseUrl}}/infos
+Accept: application/json
+
+###
+
+### -----------------------------------------
+### Actuator
+### -----------------------------------------
+
+### [15] Health check
+GET {{baseUrl}}/actuator/health
+Accept: application/json
+
+###
+
+### [16] App info
+GET {{baseUrl}}/actuator/info
+Accept: application/json
+
+###

@@ -25,6 +25,10 @@ spring:
         enabled: true
         backend: ${VAULT_KV_BACKEND:secret}
         default-context: ${VAULT_KV_CONTEXT:atomic-backend}
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
 
 management:
   endpoints:
