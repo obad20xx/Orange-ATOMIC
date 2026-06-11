@@ -1,10 +1,12 @@
 spring:
   application:
     name: ATOMIC
+  config:
+    import: optional:vault://
   datasource:
-    url: jdbc:postgresql://localhost:5432/atomic_db
-    username: atomic_user
-    password: atomic_password
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/${POSTGRES_DB:atomic_db}}
+    username: ${SPRING_DATASOURCE_USERNAME:${DB_USERNAME:}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${DB_PASSWORD:}}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -15,7 +17,14 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
   cloud:
     vault:
-      enabled: false
+      enabled: ${VAULT_ENABLED:false}
+      uri: ${VAULT_URI:http://localhost:8200}
+      authentication: TOKEN
+      token: ${VAULT_TOKEN:}
+      kv:
+        enabled: true
+        backend: ${VAULT_KV_BACKEND:secret}
+        default-context: ${VAULT_KV_CONTEXT:atomic-backend}
 
 management:
   endpoints:
@@ -38,4 +47,3 @@ resilience4j:
     instances:
       vault:
         baseConfig: default
-

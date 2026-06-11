@@ -3,7 +3,7 @@ package com.orange.ATOMIC.service;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -17,12 +17,14 @@ import java.util.Map;
 public class VaultService {
     
     private final RestClient restClient;
+    @Value("${spring.cloud.vault.uri:http://localhost:8200}")
+    private String vaultUri;
     
     @CircuitBreaker(name = "vault", fallbackMethod = "vaultFallback")
     public Map<String, Object> getVaultHealth() {
         try {
             ResponseEntity<Map> response = restClient.get()
-                .uri("http://localhost:8200/v1/sys/health")
+                .uri(vaultUri + "/v1/sys/health")
                 .retrieve()
                 .toEntity(Map.class);
             
