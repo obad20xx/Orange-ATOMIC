@@ -1,6 +1,6 @@
 ## 🚀 Milestones & Copilot Integration Blueprint
 
-### Milestone 1: Application Foundation & Local Orchestration (Days 1-2)
+### Milestone 1: Application Foundation & Local Orchestration
 
 **Goal:** Build the "Tasky" application features, ensure clean frontend-backend REST communication, integrate HashiCorp Vault, and orchestrate locally using Docker Compose.
 
@@ -57,7 +57,7 @@
 
 ---
 
-### Milestone 2: Kubernetes Orchestration & Helm (Day 3)
+### Milestone 2: Kubernetes Orchestration & Helm
 
 **Goal:** Translate the verified Docker Compose setup into a modular, production-ready Helm chart.
 
@@ -105,7 +105,7 @@
 
 ---
 
-### Milestone 4: Local CI/CD Pipeline Automation (Day 5)
+### Milestone 4: Local CI/CD Pipeline Automation
 
 **Goal:** Configure a local GitLab runner executing inside your environment to pull code changes, execute tests, build images, and instantly update your home Kubernetes cluster.
 
@@ -119,7 +119,7 @@
 
 ---
 
-### Milestone 5: Senior-Level Handover Documentation (Day 6)
+### Milestone 5: Senior-Level Handover Documentation
 
 **Goal:** Present the entire solution so seamlessly that reviewers can audit everything instantly.
 
