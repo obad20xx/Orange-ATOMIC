@@ -57,7 +57,3 @@ Thumbs.db
 # Local environment overrides
 .env
 application-local.properties
-
-#castume_scripts
-gradlew.bat
-gradlew
