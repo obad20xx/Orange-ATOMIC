@@ -1,0 +1,52 @@
+global:
+  environment: production
+
+backend:
+  replicaCount: 1
+  image:
+    repository: tasky-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: LoadBalancer
+    port: 8080
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+frontend:
+  replicaCount: 1
+  image:
+    repository: tasky-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: LoadBalancer
+    port: 3000
+  resources:
+    limits:
+      cpu: 100m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+postgresql:
+  architecture: standalone
+  image:
+    repository: bitnamilegacy/postgresql
+    tag: 15.4.0-debian-11-r45
+  auth:
+    database: atomic_db
+    username: atomic_user
+    password: "change_me"
+
+vault:
+  server:
+    dev:
+      enabled: true
+      devRootToken: "dev-only-root-token"
