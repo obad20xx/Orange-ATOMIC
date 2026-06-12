@@ -22,3 +22,6 @@
 **/helm/tasky-app/charts/*.tgz
 **/helm/tasky-app/charts/postgresql/
 **/helm/tasky-app/charts/vault/
+
+# Ignore local GitLab CI/CD configuration files
+.gitlab-ci-local
