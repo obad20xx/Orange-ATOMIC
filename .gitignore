@@ -18,3 +18,7 @@
 .project
 .settings/
 
+# Ignore Helm chart vendor dependencies
+**/helm/tasky-app/charts/*.tgz
+**/helm/tasky-app/charts/postgresql/
+**/helm/tasky-app/charts/vault/
