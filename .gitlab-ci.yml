@@ -20,7 +20,9 @@ default:
 # ==========================================
 helm-lint:
   stage: lint
-  image: alpine/helm:3.14.0
+  image: 
+    name: alpine/helm:3.14.0
+    entrypoint: [""]
   services: [] # No Docker-in-Docker needed for static analysis
   script:
     - echo "Validating Helm chart architecture..."
@@ -61,7 +63,9 @@ build-frontend:
 # ==========================================
 helm-dry-run:
   stage: deploy
-  image: alpine/helm:3.14.0
+  image: 
+    name: alpine/helm:3.14.0
+    entrypoint: [""]
   services: []
   script:
     - echo "Simulating deployment onto target infrastructure..."
