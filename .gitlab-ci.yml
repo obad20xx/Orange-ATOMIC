@@ -72,6 +72,6 @@ helm-dry-run:
     # Downloads external vendor dependencies dynamically 
     - helm dependency update ./helm/tasky-app
     # Verifies everything parses and compiles inside Helm cleanly
-    - helm install tasky-dry-run ./helm/tasky-app --dry-run --debug
+    - helm install tasky-dry-run ./helm/tasky-app --dry-run=client --debug
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
