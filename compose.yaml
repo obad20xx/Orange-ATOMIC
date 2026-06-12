@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: 'postgres:latest'
+    image: 'postgres:15-alpine' # Aligned with your tasky-db log status
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-atomic_db}
       POSTGRES_USER: ${POSTGRES_USER:-atomic_user}
@@ -9,20 +9,52 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-atomic_user} -d ${POSTGRES_DB:-atomic_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   vault:
-    image: hashicorp/vault:1.17
-    container_name: atomic-vault
-    cap_add:
-      - IPC_LOCK
-    environment:
-      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:-dev-only-root-token}
-      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
-    command: vault server -dev
+      image: hashicorp/vault:1.17
+      container_name: atomic-vault
+      cap_add:
+        - IPC_LOCK
+      environment:
+        VAULT_DEV_ROOT_TOKEN_ID: "dev-only-root-token"
+        VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+      command: vault server -dev
+      ports:
+        - "8200:8200"
+      # Match the container configuration expected by your backend dependencies
+      healthcheck:
+        test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+        interval: 5s
+        timeout: 2s
+        retries: 3
+
+  tasky-backend:
+    build:
+      context: ./ATOMIC-Backend
+    container_name: tasky-backend
     ports:
-      - "8200:8200"
-    volumes:
-      - vault-file:/vault/file
+      - "8080:8080"
+    env_file:
+      - .env.backend.example
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+
+  tasky-frontend:
+    build:
+      context: ./ATOMIC-Frontend
+    container_name: tasky-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - tasky-backend
 
 volumes:
   postgres-data:
