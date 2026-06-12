@@ -5,8 +5,8 @@
     import: optional:vault://
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/${POSTGRES_DB:atomic_db}}
-    username: ${SPRING_DATASOURCE_USERNAME:${DB_USERNAME:}}
-    password: ${SPRING_DATASOURCE_PASSWORD:${DB_PASSWORD:}}
+    username: ${SPRING_DATASOURCE_USERNAME:${POSTGRES_USER:atomic_user}} # Fallback to POSTGRES_USER
+    password: ${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:change_me}} # Fallback to POSTGRES_PASSWORD
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
