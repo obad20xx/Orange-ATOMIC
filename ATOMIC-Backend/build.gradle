@@ -1,7 +1,7 @@
 plugins {
 	id 'java'
-	id 'org.springframework.boot' version '3.2.4'
-	id 'io.spring.dependency-management' version '1.1.7'
+	id 'org.springframework.boot' version '3.3.1' // Upgraded to a highly stable 3.3.x release line
+	id 'io.spring.dependency-management' version '1.1.5'
 }
 
 group = 'com.orange'
@@ -9,6 +9,7 @@ version = '0.0.1-SNAPSHOT'
 
 java {
 	toolchain {
+		// Securely pins compilation and runtime targets to Java 21 LTS
 		languageVersion = JavaLanguageVersion.of(21)
 	}
 }
@@ -18,37 +19,50 @@ repositories {
 }
 
 ext {
-	set('springCloudVersion', "2023.0.0")
+	// Adjusted Spring Cloud BOM version to cleanly support Spring Boot 3.3.x
+	set('springCloudVersion', "2023.0.2")
 }
 
 dependencies {
+	// Core Framework Dependencies
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	implementation 'org.springframework.boot:spring-boot-starter-web'
-	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-validation' // Maps Jakarta Validation constraints
+	
+	// Microservice Resilience & Vault Management
 	implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
 	implementation 'org.springframework.cloud:spring-cloud-starter-vault-config'
-	//Swagger/OpenAPI 3 Integration
-    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0'
-
-	compileOnly 'org.projectlombok:lombok'
-
-	developmentOnly 'org.springframework.boot:spring-boot-devtools'
-	developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
-
-	runtimeOnly 'org.postgresql:postgresql'
 	
+	// Swagger/OpenAPI 3 Integration
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0'
+
+	// Boilerplate Reduction
+	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
 
+	// Local Development Environment Enhancements
+	developmentOnly 'org.springframework.boot:spring-boot-devtools'
+	// REMOVED developmentOnly 'org.springframework.boot:spring-boot-docker-compose' 
+	// Reason: This automatic module overrides and interferes with explicit external Docker Compose bindings.
+
+	// Database Driver
+	runtimeOnly 'org.postgresql:postgresql'
+
+	// Unit Testing Pipeline Utilities
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testImplementation 'com.h2database:h2'
 	testCompileOnly 'org.projectlombok:lombok'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	testAnnotationProcessor 'org.projectlombok:lombok'
+
+	// Security Framework (Spring Security)
+	implementation 'org.springframework.boot:spring-boot-starter-security'
 }
 
 dependencyManagement {
 	imports {
+		// Explicitly structures dependencies matching the chosen Spring Cloud Ecosystem
 		mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
 	}
 }
