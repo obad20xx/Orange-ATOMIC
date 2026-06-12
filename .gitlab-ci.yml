@@ -1,0 +1,73 @@
+stages:
+  - lint
+  - package
+  - deploy
+
+variables:
+  # Use GitLab's built-in container registry
+  BACKEND_IMAGE: "$CI_REGISTRY_IMAGE/tasky-backend:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
+  FRONTEND_IMAGE: "$CI_REGISTRY_IMAGE/tasky-frontend:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+
+default:
+  image: docker:24.0.6
+  services:
+    - docker:24.0.6-dind
+
+# ==========================================
+# STAGE 1: Linting & Quality Gates
+# ==========================================
+helm-lint:
+  stage: lint
+  image: alpine/helm:3.14.0
+  services: [] # No Docker-in-Docker needed for static analysis
+  script:
+    - echo "Validating Helm chart architecture..."
+    - helm lint ./helm/tasky-app
+  rules:
+    - changes:
+        - helm/tasky-app/**/*
+
+# ==========================================
+# STAGE 2: Parallel Container Packaging
+# ==========================================
+build-backend:
+  stage: package
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - echo "Building and packaging backend microservice..."
+    - docker build -t $BACKEND_IMAGE ./ATOMIC-Backend
+    - docker push $BACKEND_IMAGE
+  rules:
+    - changes:
+        - ATOMIC-Backend/**/*
+
+build-frontend:
+  stage: package
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - echo "Building and packaging static frontend web server..."
+    - docker build -t $FRONTEND_IMAGE ./ATOMIC-Frontend
+    - docker push $FRONTEND_IMAGE
+  rules:
+    - changes:
+        - ATOMIC-Frontend/**/*
+
+# ==========================================
+# STAGE 3: Dry-Run / Infrastructure Deployment
+# ==========================================
+helm-dry-run:
+  stage: deploy
+  image: alpine/helm:3.14.0
+  services: []
+  script:
+    - echo "Simulating deployment onto target infrastructure..."
+    # Downloads external vendor dependencies dynamically 
+    - helm dependency update ./helm/tasky-app
+    # Verifies everything parses and compiles inside Helm cleanly
+    - helm install tasky-dry-run ./helm/tasky-app --dry-run --debug
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
