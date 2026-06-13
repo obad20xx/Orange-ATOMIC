@@ -100,58 +100,60 @@ deploy-to-do-k8s:
       VAULT_TOKEN_SECRET_KEY="${VAULT_TOKEN_SECRET_KEY:-token}"
       CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-*}"
       BACKEND_SERVICE_NAME="${BACKEND_SERVICE_NAME:-${HELM_RELEASE_NAME}-backend}"
-      HELM_TIMEOUT="${HELM_TIMEOUT:-10m}"
+      HELM_TIMEOUT="${HELM_TIMEOUT:-30m}"
   script: |
     echo "=== Step 1: Verify cluster connectivity ==="
     kubectl cluster-info
     kubectl get nodes
 
-    echo "=== Step 2: Update Helm chart dependencies ==="
-    helm dependency update helm/tasky-app
-
-    echo "=== Step 3: Ensure target namespace exists ==="
+    echo "=== Step 2: Ensure target namespace exists ==="
     kubectl create namespace "$HELM_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
-    echo "=== Step 4: Create image pull secret for GitLab Registry ==="
+    echo "=== Step 3: Create image pull secret for GitLab Registry ==="
     kubectl create secret docker-registry "$IMAGE_PULL_SECRET" --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" --docker-password="$REGISTRY_PASSWORD" --namespace="$HELM_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
-    echo "=== Step 5: Deploy / Upgrade via Helm ==="
-    helm upgrade --install "$HELM_RELEASE_NAME" helm/tasky-app \
-      --namespace="$HELM_NAMESPACE" \
-      --create-namespace \
-      --set global.releaseName="$HELM_RELEASE_NAME" \
-      --set global.imagePullSecret="$IMAGE_PULL_SECRET" \
-      --set backend.image.repository="$BACKEND_IMAGE" \
-      --set backend.image.tag="$IMAGE_TAG" \
-      --set backend.image.pullPolicy="Always" \
-      --set backend.database.host="$DB_HOST" \
-      --set backend.database.port="$DB_PORT" \
-      --set backend.database.name="$DB_NAME" \
-      --set backend.database.username="$DB_USER" \
-      --set backend.database.passwordSecret.name="$DB_PASSWORD_SECRET" \
-      --set backend.database.passwordSecret.key="$DB_PASSWORD_SECRET_KEY" \
-      --set postgresql.auth.database="$DB_NAME" \
-      --set postgresql.auth.username="$DB_USER" \
-      --set postgresql.auth.password="$POSTGRES_PASSWORD" \
-      --set vault.server.dev.devRootToken="$VAULT_DEV_ROOT_TOKEN" \
-      --set backend.vault.scheme="$VAULT_SCHEME" \
-      --set backend.vault.host="$VAULT_HOST" \
-      --set backend.vault.port="$VAULT_PORT" \
-      --set backend.vault.tokenSecret.name="$VAULT_TOKEN_SECRET" \
-      --set backend.vault.tokenSecret.key="$VAULT_TOKEN_SECRET_KEY" \
-      --set backend.corsAllowedOrigins="$CORS_ALLOWED_ORIGINS" \
-      --set frontend.image.repository="$FRONTEND_IMAGE" \
-      --set frontend.image.tag="$IMAGE_TAG" \
-      --set frontend.image.pullPolicy="Always" \
-      --set frontend.backendServiceName="$BACKEND_SERVICE_NAME" \
-      --wait \
-      --timeout "$HELM_TIMEOUT"
+    echo "=== Step 4: Deploy / Upgrade via Helm (with retry on rate limit) ==="
+    for i in 1 2 3; do
+      helm upgrade --install "$HELM_RELEASE_NAME" helm/tasky-app \
+        --namespace="$HELM_NAMESPACE" \
+        --create-namespace \
+        --dependency-update \
+        --set global.releaseName="$HELM_RELEASE_NAME" \
+        --set global.imagePullSecret="$IMAGE_PULL_SECRET" \
+        --set backend.image.repository="$BACKEND_IMAGE" \
+        --set backend.image.tag="$IMAGE_TAG" \
+        --set backend.image.pullPolicy="Always" \
+        --set backend.database.host="$DB_HOST" \
+        --set backend.database.port="$DB_PORT" \
+        --set backend.database.name="$DB_NAME" \
+        --set backend.database.username="$DB_USER" \
+        --set backend.database.passwordSecret.name="$DB_PASSWORD_SECRET" \
+        --set backend.database.passwordSecret.key="$DB_PASSWORD_SECRET_KEY" \
+        --set postgresql.auth.database="$DB_NAME" \
+        --set postgresql.auth.username="$DB_USER" \
+        --set postgresql.auth.password="$POSTGRES_PASSWORD" \
+        --set vault.server.dev.devRootToken="$VAULT_DEV_ROOT_TOKEN" \
+        --set backend.vault.scheme="$VAULT_SCHEME" \
+        --set backend.vault.host="$VAULT_HOST" \
+        --set backend.vault.port="$VAULT_PORT" \
+        --set backend.vault.tokenSecret.name="$VAULT_TOKEN_SECRET" \
+        --set backend.vault.tokenSecret.key="$VAULT_TOKEN_SECRET_KEY" \
+        --set backend.corsAllowedOrigins="$CORS_ALLOWED_ORIGINS" \
+        --set frontend.image.repository="$FRONTEND_IMAGE" \
+        --set frontend.image.tag="$IMAGE_TAG" \
+        --set frontend.image.pullPolicy="Always" \
+        --set frontend.backendServiceName="$BACKEND_SERVICE_NAME" \
+        --wait \
+        --timeout "$HELM_TIMEOUT" && break
+      echo "Helm install attempt $i failed. Retrying in 90s..."
+      sleep 90
+    done
 
-    echo "=== Step 6: Verify rollout status ==="
+    echo "=== Step 5: Verify rollout status ==="
     kubectl rollout status deployment/"$HELM_RELEASE_NAME"-backend --namespace="$HELM_NAMESPACE" --timeout=5m
     kubectl rollout status deployment/"$HELM_RELEASE_NAME"-frontend --namespace="$HELM_NAMESPACE" --timeout=5m
 
-    echo "=== Step 7: Wait for DigitalOcean Load Balancer IP ==="
+    echo "=== Step 6: Wait for DigitalOcean Load Balancer IP ==="
     kubectl wait --for=jsonpath='{.status.loadBalancer.ingress[0].ip}' service/"$HELM_RELEASE_NAME"-frontend --namespace="$HELM_NAMESPACE" --timeout=6m 2>/dev/null
     EXTERNAL_IP=$(kubectl get svc "$HELM_RELEASE_NAME"-frontend -n "$HELM_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
     test -n "$EXTERNAL_IP" && echo "==========================================================" && echo "SUCCESS! Orange-ATOMIC is live at: http://$EXTERNAL_IP" && echo "Backend API at: http://$EXTERNAL_IP/api" && echo "=========================================================="
