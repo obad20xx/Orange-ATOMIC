@@ -21,6 +21,27 @@ spec:
       securityContext:
         runAsNonRoot: {{ .Values.backend.securityContext.runAsNonRoot }}
         runAsUser: {{ .Values.backend.securityContext.runAsUser }}
+      {{- if .Values.backend.database.host }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ .Values.backend.initContainerImage }}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" 2>/dev/null; do
+                echo "Waiting for PostgreSQL at $DB_HOST:$DB_PORT..."
+                sleep 3
+              done
+              echo "PostgreSQL is ready!"
+          env:
+            - name: DB_HOST
+              value: {{ .Values.backend.database.host }}
+            - name: DB_PORT
+              value: "{{ .Values.backend.database.port }}"
+            - name: DB_USER
+              value: {{ .Values.backend.database.username | quote }}
+      {{- end }}
       containers:
         - name: backend
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"

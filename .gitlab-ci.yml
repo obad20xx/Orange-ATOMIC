@@ -126,6 +126,8 @@ deploy-to-do-k8s:
       --set backend.database.username="$DB_USER" \
       --set backend.database.passwordSecret.name="$DB_PASSWORD_SECRET" \
       --set backend.database.passwordSecret.key="$DB_PASSWORD_SECRET_KEY" \
+      --set postgresql.image.repository="bitnami/postgresql" \
+      --set postgresql.image.tag="15.4.0-debian-11-r45" \
       --set postgresql.auth.database="$DB_NAME" \
       --set postgresql.auth.username="$DB_USER" \
       --set postgresql.auth.password="$POSTGRES_PASSWORD" \

@@ -49,6 +49,9 @@ backend:
       cpu: 250m
       memory: 256Mi
 
+  # Init container image for waiting on PostgreSQL (includes pg_isready)
+  initContainerImage: "bitnami/postgresql:15.4.0-debian-11-r45"
+
   # Database connection parameters
   database:
     host: ""           # e.g. orange-atomic-postgresql (Bitnami convention)
