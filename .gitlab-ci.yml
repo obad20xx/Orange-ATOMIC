@@ -3,7 +3,7 @@ stages:
   - test-deploy
 
 default:
-  image: registry.k8s.io/kubectl:v1.28.0
+  image: bitnami/kubectl:1.28-debian-11 
 
 before_script:
   - echo "Decoding DigitalOcean kubeconfig credentials..."
@@ -17,7 +17,7 @@ before_script:
 verify-cluster-connection:
   stage: cluster-check
   image:
-    name: registry.k8s.io/kubectl:v1.28.0
+    name: bitnami/kubectl:1.28-debian-11
     entrypoint: [""] 
   script:
     - echo "Testing basic authentication to DigitalOcean API..."
@@ -31,8 +31,8 @@ verify-cluster-connection:
 deploy-test-nginx:
   stage: test-deploy
   image:
-    name: registry.k8s.io/kubectl:v1.28.0
-    entrypoint: [""] 
+    name: bitnami/kubectl:1.28-debian-11
+    entrypoint: [""]
   script:
     - echo "Creating a temporary testing namespace..."
     - kubectl create namespace pipeline-test-zone --dry-run=client -o yaml | kubectl apply -f -
