@@ -12,35 +12,32 @@ variables:
   FRONTEND_IMAGE: $CI_REGISTRY_IMAGE/frontend
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
 
-  # --- Target branch to trigger pipeline (CI variable, default: master) ---
-  TARGET_BRANCH: ${TARGET_BRANCH:-master}
-
   # --- Helm Release Configuration (override via CI variables) ---
-  HELM_RELEASE_NAME: ${HELM_RELEASE_NAME:-orange-atomic}
-  HELM_NAMESPACE: ${HELM_NAMESPACE:-production}
-  IMAGE_PULL_SECRET: ${IMAGE_PULL_SECRET:-gitlab-registry}
+  HELM_RELEASE_NAME: ${HELM_RELEASE_NAME}
+  HELM_NAMESPACE: ${HELM_NAMESPACE}
+  IMAGE_PULL_SECRET: ${IMAGE_PULL_SECRET}
 
   # --- Database Configuration (override via CI variables) ---
-  DB_HOST: ${DB_HOST:-orange-atomic-postgresql}
-  DB_PORT: ${DB_PORT:-5432}
-  DB_NAME: ${DB_NAME:-atomic_db}
-  DB_USER: ${DB_USER:-atomic_user}
-  DB_PASSWORD_SECRET: ${DB_PASSWORD_SECRET:-orange-atomic-postgresql}
-  DB_PASSWORD_SECRET_KEY: ${DB_PASSWORD_SECRET_KEY:-password}
+  DB_HOST: ${DB_HOST}
+  DB_PORT: ${DB_PORT}
+  DB_NAME: ${DB_NAME}
+  DB_USER: ${DB_USER}
+  DB_PASSWORD_SECRET: ${DB_PASSWORD_SECRET}
+  DB_PASSWORD_SECRET_KEY: ${DB_PASSWORD_SECRET_KEY}
 
   # --- Vault Configuration (override via CI variables) ---
-  VAULT_SCHEME: ${VAULT_SCHEME:-http}
-  VAULT_HOST: ${VAULT_HOST:-orange-atomic-vault}
-  VAULT_PORT: ${VAULT_PORT:-8200}
-  VAULT_DEV_ROOT_TOKEN: ${VAULT_DEV_ROOT_TOKEN:-dev-only-root-token}
-  VAULT_TOKEN_SECRET: ${VAULT_TOKEN_SECRET:-orange-atomic-vault-token}
-  VAULT_TOKEN_SECRET_KEY: ${VAULT_TOKEN_SECRET_KEY:-token}
+  VAULT_SCHEME: ${VAULT_SCHEME}
+  VAULT_HOST: ${VAULT_HOST}
+  VAULT_PORT: ${VAULT_PORT}
+  VAULT_DEV_ROOT_TOKEN: ${VAULT_DEV_ROOT_TOKEN}
+  VAULT_TOKEN_SECRET: ${VAULT_TOKEN_SECRET}
+  VAULT_TOKEN_SECRET_KEY: ${VAULT_TOKEN_SECRET_KEY}
 
   # --- CORS (override via CI variables) ---
-  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-*}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
 
   # --- Backend service name used by Nginx proxy_pass ---
-  BACKEND_SERVICE_NAME: ${BACKEND_SERVICE_NAME:-orange-atomic-backend}
+  BACKEND_SERVICE_NAME: ${BACKEND_SERVICE_NAME}
 
 default:
   image: alpine:3.19
@@ -63,7 +60,7 @@ build-backend:
     - docker push "$BACKEND_IMAGE:$IMAGE_TAG"
     - docker push "$BACKEND_IMAGE:latest"
   rules:
-    - if: $CI_COMMIT_BRANCH == "$TARGET_BRANCH"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # ==========================================
 # STAGE 2: Build Frontend Docker Image
@@ -83,7 +80,7 @@ build-frontend:
     - docker push "$FRONTEND_IMAGE:$IMAGE_TAG"
     - docker push "$FRONTEND_IMAGE:latest"
   rules:
-    - if: $CI_COMMIT_BRANCH == "$TARGET_BRANCH"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # ==========================================
 # STAGE 3: Deploy to DigitalOcean Kubernetes
@@ -95,17 +92,41 @@ deploy-to-do-k8s:
     - build-backend
     - build-frontend
   before_script:
-    - echo "Installing system dependencies..."
-    - apk add --no-cache curl openssl ca-certificates gettext
-    - echo "Installing kubectl (version from CI var or default)..."
-    - KUBECTL_VERSION="${KUBECTL_VERSION:-v1.28.0}"
-    - curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl" && chmod +x kubectl && mv kubectl /usr/local/bin/
-    - echo "Installing helm (version from CI var or default)..."
-    - HELM_VERSION="${HELM_VERSION:-3.14.0}"
-    - curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && chmod 700 get_helm.sh && ./get_helm.sh --version "$HELM_VERSION" && rm get_helm.sh
-    - echo "Decoding DigitalOcean kubeconfig..."
-    - mkdir -p ~/.kube
-    - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config && chmod 600 ~/.kube/config
+    - |
+      apk add --no-cache curl openssl ca-certificates gettext
+
+      KUBECTL_VERSION="${KUBECTL_VERSION:-v1.28.0}"
+      curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
+      chmod +x kubectl && mv kubectl /usr/local/bin/
+
+      HELM_VERSION="${HELM_VERSION:-3.14.0}"
+      curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+      chmod 700 get_helm.sh && ./get_helm.sh --version "$HELM_VERSION" && rm get_helm.sh
+
+      mkdir -p ~/.kube
+      echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
+      chmod 600 ~/.kube/config
+
+      # Apply defaults for optional variables (shell-level, not YAML-level)
+      HELM_RELEASE_NAME="${HELM_RELEASE_NAME:-orange-atomic}"
+      HELM_NAMESPACE="${HELM_NAMESPACE:-production}"
+      IMAGE_PULL_SECRET="${IMAGE_PULL_SECRET:-gitlab-registry}"
+      DB_HOST="${DB_HOST:-${HELM_RELEASE_NAME}-postgresql}"
+      DB_PORT="${DB_PORT:-5432}"
+      DB_NAME="${DB_NAME:-atomic_db}"
+      DB_USER="${DB_USER:-atomic_user}"
+      DB_PASSWORD_SECRET="${DB_PASSWORD_SECRET:-${HELM_RELEASE_NAME}-postgresql}"
+      DB_PASSWORD_SECRET_KEY="${DB_PASSWORD_SECRET_KEY:-password}"
+      VAULT_SCHEME="${VAULT_SCHEME:-http}"
+      VAULT_HOST="${VAULT_HOST:-${HELM_RELEASE_NAME}-vault}"
+      VAULT_PORT="${VAULT_PORT:-8200}"
+      VAULT_DEV_ROOT_TOKEN="${VAULT_DEV_ROOT_TOKEN:-dev-only-root-token}"
+      VAULT_TOKEN_SECRET="${VAULT_TOKEN_SECRET:-${HELM_RELEASE_NAME}-vault-token}"
+      VAULT_TOKEN_SECRET_KEY="${VAULT_TOKEN_SECRET_KEY:-token}"
+      CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-*}"
+      BACKEND_SERVICE_NAME="${BACKEND_SERVICE_NAME:-${HELM_RELEASE_NAME}-backend}"
+      DOCKER_VERSION="${DOCKER_VERSION:-27.0.3}"
+      HELM_TIMEOUT="${HELM_TIMEOUT:-10m}"
   script: |
     echo "=== Step 1: Verify cluster connectivity ==="
     kubectl cluster-info
@@ -121,7 +142,36 @@ deploy-to-do-k8s:
     kubectl create secret docker-registry "$IMAGE_PULL_SECRET" --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" --docker-password="$REGISTRY_PASSWORD" --namespace="$HELM_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
     echo "=== Step 5: Deploy / Upgrade via Helm ==="
-    helm upgrade --install "$HELM_RELEASE_NAME" helm/tasky-app --namespace="$HELM_NAMESPACE" --create-namespace --set global.releaseName="$HELM_RELEASE_NAME" --set global.imagePullSecret="$IMAGE_PULL_SECRET" --set backend.image.repository="$BACKEND_IMAGE" --set backend.image.tag="$IMAGE_TAG" --set backend.image.pullPolicy="Always" --set backend.database.host="$DB_HOST" --set backend.database.port="$DB_PORT" --set backend.database.name="$DB_NAME" --set backend.database.username="$DB_USER" --set backend.database.passwordSecret.name="$DB_PASSWORD_SECRET" --set backend.database.passwordSecret.key="$DB_PASSWORD_SECRET_KEY" --set postgresql.auth.database="$DB_NAME" --set postgresql.auth.username="$DB_USER" --set postgresql.auth.password="$POSTGRES_PASSWORD" --set vault.server.dev.devRootToken="$VAULT_DEV_ROOT_TOKEN" --set backend.vault.scheme="$VAULT_SCHEME" --set backend.vault.host="$VAULT_HOST" --set backend.vault.port="$VAULT_PORT" --set backend.vault.tokenSecret.name="$VAULT_TOKEN_SECRET" --set backend.vault.tokenSecret.key="$VAULT_TOKEN_SECRET_KEY" --set backend.corsAllowedOrigins="$CORS_ALLOWED_ORIGINS" --set frontend.image.repository="$FRONTEND_IMAGE" --set frontend.image.tag="$IMAGE_TAG" --set frontend.image.pullPolicy="Always" --set frontend.backendServiceName="$BACKEND_SERVICE_NAME" --wait --timeout "${HELM_TIMEOUT:-10m}"
+    helm upgrade --install "$HELM_RELEASE_NAME" helm/tasky-app \
+      --namespace="$HELM_NAMESPACE" \
+      --create-namespace \
+      --set global.releaseName="$HELM_RELEASE_NAME" \
+      --set global.imagePullSecret="$IMAGE_PULL_SECRET" \
+      --set backend.image.repository="$BACKEND_IMAGE" \
+      --set backend.image.tag="$IMAGE_TAG" \
+      --set backend.image.pullPolicy="Always" \
+      --set backend.database.host="$DB_HOST" \
+      --set backend.database.port="$DB_PORT" \
+      --set backend.database.name="$DB_NAME" \
+      --set backend.database.username="$DB_USER" \
+      --set backend.database.passwordSecret.name="$DB_PASSWORD_SECRET" \
+      --set backend.database.passwordSecret.key="$DB_PASSWORD_SECRET_KEY" \
+      --set postgresql.auth.database="$DB_NAME" \
+      --set postgresql.auth.username="$DB_USER" \
+      --set postgresql.auth.password="$POSTGRES_PASSWORD" \
+      --set vault.server.dev.devRootToken="$VAULT_DEV_ROOT_TOKEN" \
+      --set backend.vault.scheme="$VAULT_SCHEME" \
+      --set backend.vault.host="$VAULT_HOST" \
+      --set backend.vault.port="$VAULT_PORT" \
+      --set backend.vault.tokenSecret.name="$VAULT_TOKEN_SECRET" \
+      --set backend.vault.tokenSecret.key="$VAULT_TOKEN_SECRET_KEY" \
+      --set backend.corsAllowedOrigins="$CORS_ALLOWED_ORIGINS" \
+      --set frontend.image.repository="$FRONTEND_IMAGE" \
+      --set frontend.image.tag="$IMAGE_TAG" \
+      --set frontend.image.pullPolicy="Always" \
+      --set frontend.backendServiceName="$BACKEND_SERVICE_NAME" \
+      --wait \
+      --timeout "$HELM_TIMEOUT"
 
     echo "=== Step 6: Verify rollout status ==="
     kubectl rollout status deployment/"$HELM_RELEASE_NAME"-backend --namespace="$HELM_NAMESPACE" --timeout=5m
@@ -134,4 +184,4 @@ deploy-to-do-k8s:
 
     kubectl get pods,svc -n "$HELM_NAMESPACE"
   rules:
-    - if: $CI_COMMIT_BRANCH == "$TARGET_BRANCH"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
