@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: tasky-backend
+  name: {{ .Values.global.releaseName }}-backend
   labels:
-    app: tasky-backend
+    app: {{ .Values.global.releaseName }}-backend
 spec:
   type: {{ .Values.backend.service.type }}
   ports:
@@ -12,4 +12,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: tasky-backend
+    app: {{ .Values.global.releaseName }}-backend

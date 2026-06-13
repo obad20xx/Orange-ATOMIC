@@ -1,69 +1,195 @@
 stages:
-  - cluster-check
-  - test-deploy
+  - build-backend
+  - build-frontend
+  - deploy
+
+variables:
+  # --- GitLab Container Registry (auto-provided by GitLab) ---
+  REGISTRY: $CI_REGISTRY
+  REGISTRY_USER: $CI_REGISTRY_USER
+  REGISTRY_PASSWORD: $CI_REGISTRY_PASSWORD
+  BACKEND_IMAGE: $CI_REGISTRY_IMAGE/backend
+  FRONTEND_IMAGE: $CI_REGISTRY_IMAGE/frontend
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+
+  # --- Target branch to trigger pipeline (CI variable, default: master) ---
+  TARGET_BRANCH: ${TARGET_BRANCH:-master}
+
+  # --- Helm Release Configuration (override via CI variables) ---
+  HELM_RELEASE_NAME: ${HELM_RELEASE_NAME:-orange-atomic}
+  HELM_NAMESPACE: ${HELM_NAMESPACE:-production}
+  IMAGE_PULL_SECRET: ${IMAGE_PULL_SECRET:-gitlab-registry}
+
+  # --- Database Configuration (override via CI variables) ---
+  DB_HOST: ${DB_HOST:-orange-atomic-postgresql}
+  DB_PORT: ${DB_PORT:-5432}
+  DB_NAME: ${DB_NAME:-atomic_db}
+  DB_USER: ${DB_USER:-atomic_user}
+  DB_PASSWORD_SECRET: ${DB_PASSWORD_SECRET:-orange-atomic-postgresql}
+  DB_PASSWORD_SECRET_KEY: ${DB_PASSWORD_SECRET_KEY:-password}
+
+  # --- Vault Configuration (override via CI variables) ---
+  VAULT_SCHEME: ${VAULT_SCHEME:-http}
+  VAULT_HOST: ${VAULT_HOST:-orange-atomic-vault}
+  VAULT_PORT: ${VAULT_PORT:-8200}
+  VAULT_DEV_ROOT_TOKEN: ${VAULT_DEV_ROOT_TOKEN:-dev-only-root-token}
+  VAULT_TOKEN_SECRET: ${VAULT_TOKEN_SECRET:-orange-atomic-vault-token}
+  VAULT_TOKEN_SECRET_KEY: ${VAULT_TOKEN_SECRET_KEY:-token}
+
+  # --- CORS (override via CI variables) ---
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-*}
+
+  # --- Backend service name used by Nginx proxy_pass ---
+  BACKEND_SERVICE_NAME: ${BACKEND_SERVICE_NAME:-orange-atomic-backend}
 
 default:
   image: alpine:3.19
 
-before_script:
-  - echo "Installing standard dependencies (curl & openssl)..."
-  - apk add --no-cache curl openssl
-  
-  - echo "Downloading official stable kubectl binary..."
-  - curl -LO "https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl"
-  - chmod +x ./kubectl
-  - mv ./kubectl /usr/local/bin/kubectl
-  
-  - echo "Decoding DigitalOcean kubeconfig credentials..."
-  - mkdir -p ~/.kube
-  - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
-  - chmod 600 ~/.kube/config
+# ==========================================
+# Helper: Setup kubectl + helm + kubeconfig
+# ==========================================
+.setup-k8s: &setup-k8s
+  before_script:
+    - echo "Installing system dependencies..."
+    - apk add --no-cache curl openssl ca-certificates gettext
+    - echo "Installing kubectl (version from CI var or default)..."
+    - KUBECTL_VERSION="${KUBECTL_VERSION:-v1.28.0}"
+    - curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
+    - chmod +x kubectl && mv kubectl /usr/local/bin/
+    - echo "Installing helm (version from CI var or default)..."
+    - HELM_VERSION="${HELM_VERSION:-3.14.0}"
+    - curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+    - chmod 700 get_helm.sh && ./get_helm.sh --version "$HELM_VERSION" && rm get_helm.sh
+    - echo "Decoding DigitalOcean kubeconfig..."
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
+    - chmod 600 ~/.kube/config
 
 # ==========================================
-# STAGE 1: Verify Cluster Communication
+# Helper: Docker login
 # ==========================================
-verify-cluster-connection:
-  stage: cluster-check
+.docker-login: &docker-login
+  before_script:
+    - echo "Logging into GitLab Container Registry..."
+    - echo "$REGISTRY_PASSWORD" | docker login -u "$REGISTRY_USER" --password-stdin "$REGISTRY"
+
+# ==========================================
+# STAGE 1: Build Backend Docker Image
+# ==========================================
+build-backend:
+  stage: build-backend
+  image: docker:${DOCKER_VERSION:-27.0.3}
+  services:
+    - docker:${DOCKER_VERSION:-27.0.3}-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  <<: *docker-login
   script:
-    - echo "Testing basic authentication to DigitalOcean API..."
+    - docker build -t "$BACKEND_IMAGE:$IMAGE_TAG" -t "$BACKEND_IMAGE:latest" ./ATOMIC-Backend
+    - docker push "$BACKEND_IMAGE:$IMAGE_TAG"
+    - docker push "$BACKEND_IMAGE:latest"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "$TARGET_BRANCH"
+
+# ==========================================
+# STAGE 2: Build Frontend Docker Image
+# ==========================================
+build-frontend:
+  stage: build-frontend
+  image: docker:${DOCKER_VERSION:-27.0.3}
+  services:
+    - docker:${DOCKER_VERSION:-27.0.3}-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  <<: *docker-login
+  script:
+    - docker build -t "$FRONTEND_IMAGE:$IMAGE_TAG" -t "$FRONTEND_IMAGE:latest" ./ATOMIC-Frontend
+    - docker push "$FRONTEND_IMAGE:$IMAGE_TAG"
+    - docker push "$FRONTEND_IMAGE:latest"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "$TARGET_BRANCH"
+
+# ==========================================
+# STAGE 3: Deploy to DigitalOcean Kubernetes
+# ==========================================
+deploy-to-do-k8s:
+  stage: deploy
+  image: alpine:3.19
+  needs:
+    - build-backend
+    - build-frontend
+  <<: *setup-k8s
+  script:
+    - echo "=== Step 1: Verify cluster connectivity ==="
     - kubectl cluster-info
-    - echo "Listing current active worker nodes in the cluster:"
     - kubectl get nodes
 
-# ==========================================
-# STAGE 2: Test Deployment & Public Exposure
-# ==========================================
-deploy-test-nginx:
-  stage: test-deploy
-  script:
-    - echo "Creating a temporary testing namespace..."
-    - kubectl create namespace pipeline-test-zone --dry-run=client -o yaml | kubectl apply -f -
-    
-    - echo "Deploying a public Nginx web server container from Docker Hub..."
-    - kubectl create deployment public-nginx-test --image=nginx:alpine --namespace=pipeline-test-zone --dry-run=client -o yaml | kubectl apply -f -
-    
-    - echo "Exposing the deployment via a DigitalOcean Cloud Load Balancer..."
-    # Changed from 'clusterip' to 'loadbalancer' to trigger public infrastructure creation
-    - kubectl create service loadbalancer public-nginx-test --tcp=80:80 --namespace=pipeline-test-zone --dry-run=client -o yaml | kubectl apply -f -
-    
-    - echo "Checking deployment rollout status..."
-    - kubectl rollout status deployment/public-nginx-test --namespace=pipeline-test-zone --timeout=1m
-    
-    - echo "Waiting for DigitalOcean to allocate your public IP address..."
-    # This loop polls the service for up to 2 minutes until DigitalOcean finishes provisioning the IP
+    - echo "=== Step 2: Update Helm chart dependencies ==="
+    - helm dependency update helm/tasky-app
+
+    - echo "=== Step 3: Ensure target namespace exists ==="
+    - kubectl create namespace "$HELM_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+    - echo "=== Step 4: Create image pull secret for GitLab Registry ==="
     - |
-      for i in $(seq 1 24); do
-        EXTERNAL_IP=$(kubectl get svc public-nginx-test -n pipeline-test-zone -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+      kubectl create secret docker-registry "$IMAGE_PULL_SECRET" \
+        --docker-server="$REGISTRY" \
+        --docker-username="$REGISTRY_USER" \
+        --docker-password="$REGISTRY_PASSWORD" \
+        --namespace="$HELM_NAMESPACE" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    - echo "=== Step 5: Deploy / Upgrade via Helm ==="
+    - helm upgrade --install "$HELM_RELEASE_NAME" helm/tasky-app \
+        --namespace="$HELM_NAMESPACE" \
+        --create-namespace \
+        --set global.releaseName="$HELM_RELEASE_NAME" \
+        --set global.imagePullSecret="$IMAGE_PULL_SECRET" \
+        --set backend.image.repository="$BACKEND_IMAGE" \
+        --set backend.image.tag="$IMAGE_TAG" \
+        --set backend.image.pullPolicy="Always" \
+        --set backend.database.host="$DB_HOST" \
+        --set backend.database.port="$DB_PORT" \
+        --set backend.database.name="$DB_NAME" \
+        --set backend.database.username="$DB_USER" \
+        --set backend.database.passwordSecret.name="$DB_PASSWORD_SECRET" \
+        --set backend.database.passwordSecret.key="$DB_PASSWORD_SECRET_KEY" \
+        --set postgresql.auth.database="$DB_NAME" \
+        --set postgresql.auth.username="$DB_USER" \
+        --set postgresql.auth.password="$POSTGRES_PASSWORD" \
+        --set vault.server.dev.devRootToken="$VAULT_DEV_ROOT_TOKEN" \
+        --set backend.vault.scheme="$VAULT_SCHEME" \
+        --set backend.vault.host="$VAULT_HOST" \
+        --set backend.vault.port="$VAULT_PORT" \
+        --set backend.vault.tokenSecret.name="$VAULT_TOKEN_SECRET" \
+        --set backend.vault.tokenSecret.key="$VAULT_TOKEN_SECRET_KEY" \
+        --set backend.corsAllowedOrigins="$CORS_ALLOWED_ORIGINS" \
+        --set frontend.image.repository="$FRONTEND_IMAGE" \
+        --set frontend.image.tag="$IMAGE_TAG" \
+        --set frontend.image.pullPolicy="Always" \
+        --set frontend.backendServiceName="$BACKEND_SERVICE_NAME" \
+        --wait \
+        --timeout "${HELM_TIMEOUT:-10m}"
+
+    - echo "=== Step 6: Verify rollout status ==="
+    - kubectl rollout status deployment/"$HELM_RELEASE_NAME"-backend --namespace="$HELM_NAMESPACE" --timeout=5m
+    - kubectl rollout status deployment/"$HELM_RELEASE_NAME"-frontend --namespace="$HELM_NAMESPACE" --timeout=5m
+
+    - echo "=== Step 7: Wait for DigitalOcean Load Balancer IP ==="
+    - |
+      for i in $(seq 1 36); do
+        EXTERNAL_IP=$(kubectl get svc "$HELM_RELEASE_NAME"-frontend -n "$HELM_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
         if [ -n "$EXTERNAL_IP" ]; then
-          echo "========================================================="
-          echo "SUCCESS! Your Nginx test app is live at: http://$EXTERNAL_IP"
-          echo "========================================================="
+          echo "=========================================================="
+          echo "SUCCESS! Orange-ATOMIC is live at: http://$EXTERNAL_IP"
+          echo "Backend API at: http://$EXTERNAL_IP/api"
+          echo "=========================================================="
           break
         fi
-        echo "Still waiting for DigitalOcean IP allocation (Checking again in 5s)..."
-        sleep 5
+        echo "Waiting for DO Load Balancer IP (checking again in 10s)..."
+        sleep 10
       done
 
-    - kubectl get pods,svc -n pipeline-test-zone
+    - kubectl get pods,svc -n "$HELM_NAMESPACE"
   rules:
-    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_COMMIT_BRANCH == "$TARGET_BRANCH"

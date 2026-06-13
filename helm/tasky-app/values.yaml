@@ -1,15 +1,46 @@
-global:
-  environment: production
+# ============================================================================
+# ORANGE-ATOMIC — Production Helm Values
+# All values can be overridden at deploy-time via `--set` or `--set-file`
+# ============================================================================
 
+global:
+  # Release name - becomes the prefix for all Kubernetes resources
+  releaseName: "orange-atomic"
+
+  # Name of the imagePullSecret for private Docker registries
+  # Leave empty (null / "") if images are public
+  imagePullSecret: ""
+
+# ============================================================================
+# BACKEND — Spring Boot application
+# ============================================================================
 backend:
   replicaCount: 1
+
   image:
-    repository: tasky-backend
-    tag: latest
+    repository: ""       # e.g. registry.gitlab.com/your-project/backend
+    tag: "latest"
     pullPolicy: IfNotPresent
+
   service:
-    type: LoadBalancer
+    type: ClusterIP
     port: 8080
+
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+
+  healthEndpoint: /actuator/health
+
+  livenessProbe:
+    initialDelaySeconds: 65
+    periodSeconds: 10
+    failureThreshold: 3
+
+  readinessProbe:
+    initialDelaySeconds: 15
+    periodSeconds: 10
+
   resources:
     limits:
       cpu: 1000m
@@ -18,35 +49,65 @@ backend:
       cpu: 250m
       memory: 256Mi
 
+  # Database connection parameters
+  database:
+    host: ""           # e.g. orange-atomic-postgresql (Bitnami convention)
+    port: 5432
+    name: ""           # database name (from CI variable or --set)
+    username: ""       # database user (from CI variable or --set)
+    passwordSecret:
+      name: ""         # Kubernetes Secret name containing the password
+      key: "password"  # Key within that Secret
+
+  # Vault connection parameters
+  vault:
+    scheme: "http"
+    host: ""           # e.g. orange-atomic-vault (Bitnami convention)
+    port: 8200
+    # Fallback dev token for local/dev environments (tokenSecret takes precedence)
+    devRootToken: ""
+    tokenSecret:
+      name: ""         # Kubernetes Secret name containing the vault token
+      key: "token"     # Key within that Secret
+
+  # Comma-separated list of allowed CORS origins
+  # Use "*" for development, specific URL for production
+  corsAllowedOrigins: "*"
+
+  # Additional environment variables injected verbatim into the container
+  # Useful for feature flags, external service URLs, etc.
+  extraEnv: []
+  # - name: MY_FEATURE_FLAG
+  #   value: "true"
+  # - name: EXTERNAL_SERVICE_URL
+  #   value: "https://api.example.com"
+
+# ============================================================================
+# FRONTEND — Vue3 / Nginx application
+# ============================================================================
 frontend:
   replicaCount: 1
+
   image:
-    repository: tasky-frontend
-    tag: latest
+    repository: ""       # e.g. registry.gitlab.com/your-project/frontend
+    tag: "latest"
     pullPolicy: IfNotPresent
+
+  # Nginx listens on this container port
+  containerPort: 80
+
   service:
     type: LoadBalancer
-    port: 3000
+    port: 80
+
+  # The internal Kubernetes service name of the backend
+  # (the Nginx proxy_pass target)
+  backendServiceName: ""  # e.g. orange-atomic-backend
+
   resources:
     limits:
-      cpu: 100m
+      cpu: 200m
       memory: 256Mi
     requests:
-      cpu: 50m
+      cpu: 100m
       memory: 128Mi
-
-postgresql:
-  architecture: standalone
-  image:
-    repository: bitnamilegacy/postgresql
-    tag: 15.4.0-debian-11-r45
-  auth:
-    database: atomic_db
-    username: atomic_user
-    password: "change_me"
-
-vault:
-  server:
-    dev:
-      enabled: true
-      devRootToken: "dev-only-root-token"

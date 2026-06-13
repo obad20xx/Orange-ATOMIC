@@ -1,15 +1,15 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: tasky-frontend
+  name: {{ .Values.global.releaseName }}-frontend
   labels:
-    app: tasky-frontend
+    app: {{ .Values.global.releaseName }}-frontend
 spec:
   type: {{ .Values.frontend.service.type }}
   ports:
     - port: {{ .Values.frontend.service.port }}
-      targetPort: 80
+      targetPort: {{ .Values.frontend.containerPort }}
       protocol: TCP
       name: http
   selector:
-    app: tasky-frontend
+    app: {{ .Values.global.releaseName }}-frontend

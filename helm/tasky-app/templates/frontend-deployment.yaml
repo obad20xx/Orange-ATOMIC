@@ -1,25 +1,37 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: tasky-frontend
+  name: {{ .Values.global.releaseName }}-frontend
   labels:
-    app: tasky-frontend
+    app: {{ .Values.global.releaseName }}-frontend
 spec:
   replicas: {{ .Values.frontend.replicaCount }}
   selector:
     matchLabels:
-      app: tasky-frontend
+      app: {{ .Values.global.releaseName }}-frontend
   template:
     metadata:
       labels:
-        app: tasky-frontend
+        app: {{ .Values.global.releaseName }}-frontend
     spec:
+      {{- if .Values.global.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.global.imagePullSecret }}
+      {{- end }}
       containers:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
           imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
           ports:
-            - containerPort: {{ .Values.frontend.service.port }}
+            - containerPort: {{ .Values.frontend.containerPort }}
               name: http
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
           resources:
             {{- toYaml .Values.frontend.resources | nindent 12 }}
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: {{ .Values.global.releaseName }}-nginx-config
