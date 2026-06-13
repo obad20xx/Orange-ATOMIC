@@ -2,9 +2,9 @@ stages:
   - cluster-check
   - test-deploy
 
-# Global configuration to provide a lightweight image containing kubectl
+# Global configuration using the official upstream stable kubectl image
 default:
-  image: bitnami/kubectl:1.28
+  image: registry.k8s.io/kubectl:v1.28.0 
 
 before_script:
   - if [ -n "$ENTRYPOINT" ] || true; then echo "Container initialized"; fi 
