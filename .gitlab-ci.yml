@@ -46,34 +46,6 @@ default:
   image: alpine:3.19
 
 # ==========================================
-# Helper: Setup kubectl + helm + kubeconfig
-# ==========================================
-.setup-k8s: &setup-k8s
-  before_script:
-    - echo "Installing system dependencies..."
-    - apk add --no-cache curl openssl ca-certificates gettext
-    - echo "Installing kubectl (version from CI var or default)..."
-    - KUBECTL_VERSION="${KUBECTL_VERSION:-v1.28.0}"
-    - curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
-    - chmod +x kubectl && mv kubectl /usr/local/bin/
-    - echo "Installing helm (version from CI var or default)..."
-    - HELM_VERSION="${HELM_VERSION:-3.14.0}"
-    - curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-    - chmod 700 get_helm.sh && ./get_helm.sh --version "$HELM_VERSION" && rm get_helm.sh
-    - echo "Decoding DigitalOcean kubeconfig..."
-    - mkdir -p ~/.kube
-    - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
-    - chmod 600 ~/.kube/config
-
-# ==========================================
-# Helper: Docker login
-# ==========================================
-.docker-login: &docker-login
-  before_script:
-    - echo "Logging into GitLab Container Registry..."
-    - echo "$REGISTRY_PASSWORD" | docker login -u "$REGISTRY_USER" --password-stdin "$REGISTRY"
-
-# ==========================================
 # STAGE 1: Build Backend Docker Image
 # ==========================================
 build-backend:
@@ -83,7 +55,9 @@ build-backend:
     - docker:${DOCKER_VERSION:-27.0.3}-dind
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
-  <<: *docker-login
+  before_script:
+    - echo "Logging into GitLab Container Registry..."
+    - echo "$REGISTRY_PASSWORD" | docker login -u "$REGISTRY_USER" --password-stdin "$REGISTRY"
   script:
     - docker build -t "$BACKEND_IMAGE:$IMAGE_TAG" -t "$BACKEND_IMAGE:latest" ./ATOMIC-Backend
     - docker push "$BACKEND_IMAGE:$IMAGE_TAG"
@@ -101,7 +75,9 @@ build-frontend:
     - docker:${DOCKER_VERSION:-27.0.3}-dind
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
-  <<: *docker-login
+  before_script:
+    - echo "Logging into GitLab Container Registry..."
+    - echo "$REGISTRY_PASSWORD" | docker login -u "$REGISTRY_USER" --password-stdin "$REGISTRY"
   script:
     - docker build -t "$FRONTEND_IMAGE:$IMAGE_TAG" -t "$FRONTEND_IMAGE:latest" ./ATOMIC-Frontend
     - docker push "$FRONTEND_IMAGE:$IMAGE_TAG"
@@ -118,78 +94,44 @@ deploy-to-do-k8s:
   needs:
     - build-backend
     - build-frontend
-  <<: *setup-k8s
-  script:
-    - echo "=== Step 1: Verify cluster connectivity ==="
-    - kubectl cluster-info
-    - kubectl get nodes
+  before_script:
+    - echo "Installing system dependencies..."
+    - apk add --no-cache curl openssl ca-certificates gettext
+    - echo "Installing kubectl (version from CI var or default)..."
+    - KUBECTL_VERSION="${KUBECTL_VERSION:-v1.28.0}"
+    - curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl" && chmod +x kubectl && mv kubectl /usr/local/bin/
+    - echo "Installing helm (version from CI var or default)..."
+    - HELM_VERSION="${HELM_VERSION:-3.14.0}"
+    - curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && chmod 700 get_helm.sh && ./get_helm.sh --version "$HELM_VERSION" && rm get_helm.sh
+    - echo "Decoding DigitalOcean kubeconfig..."
+    - mkdir -p ~/.kube
+    - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config && chmod 600 ~/.kube/config
+  script: |
+    echo "=== Step 1: Verify cluster connectivity ==="
+    kubectl cluster-info
+    kubectl get nodes
 
-    - echo "=== Step 2: Update Helm chart dependencies ==="
-    - helm dependency update helm/tasky-app
+    echo "=== Step 2: Update Helm chart dependencies ==="
+    helm dependency update helm/tasky-app
 
-    - echo "=== Step 3: Ensure target namespace exists ==="
-    - kubectl create namespace "$HELM_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+    echo "=== Step 3: Ensure target namespace exists ==="
+    kubectl create namespace "$HELM_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
-    - echo "=== Step 4: Create image pull secret for GitLab Registry ==="
-    - |
-      kubectl create secret docker-registry "$IMAGE_PULL_SECRET" \
-        --docker-server="$REGISTRY" \
-        --docker-username="$REGISTRY_USER" \
-        --docker-password="$REGISTRY_PASSWORD" \
-        --namespace="$HELM_NAMESPACE" \
-        --dry-run=client -o yaml | kubectl apply -f -
+    echo "=== Step 4: Create image pull secret for GitLab Registry ==="
+    kubectl create secret docker-registry "$IMAGE_PULL_SECRET" --docker-server="$REGISTRY" --docker-username="$REGISTRY_USER" --docker-password="$REGISTRY_PASSWORD" --namespace="$HELM_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
-    - echo "=== Step 5: Deploy / Upgrade via Helm ==="
-    - helm upgrade --install "$HELM_RELEASE_NAME" helm/tasky-app \
-        --namespace="$HELM_NAMESPACE" \
-        --create-namespace \
-        --set global.releaseName="$HELM_RELEASE_NAME" \
-        --set global.imagePullSecret="$IMAGE_PULL_SECRET" \
-        --set backend.image.repository="$BACKEND_IMAGE" \
-        --set backend.image.tag="$IMAGE_TAG" \
-        --set backend.image.pullPolicy="Always" \
-        --set backend.database.host="$DB_HOST" \
-        --set backend.database.port="$DB_PORT" \
-        --set backend.database.name="$DB_NAME" \
-        --set backend.database.username="$DB_USER" \
-        --set backend.database.passwordSecret.name="$DB_PASSWORD_SECRET" \
-        --set backend.database.passwordSecret.key="$DB_PASSWORD_SECRET_KEY" \
-        --set postgresql.auth.database="$DB_NAME" \
-        --set postgresql.auth.username="$DB_USER" \
-        --set postgresql.auth.password="$POSTGRES_PASSWORD" \
-        --set vault.server.dev.devRootToken="$VAULT_DEV_ROOT_TOKEN" \
-        --set backend.vault.scheme="$VAULT_SCHEME" \
-        --set backend.vault.host="$VAULT_HOST" \
-        --set backend.vault.port="$VAULT_PORT" \
-        --set backend.vault.tokenSecret.name="$VAULT_TOKEN_SECRET" \
-        --set backend.vault.tokenSecret.key="$VAULT_TOKEN_SECRET_KEY" \
-        --set backend.corsAllowedOrigins="$CORS_ALLOWED_ORIGINS" \
-        --set frontend.image.repository="$FRONTEND_IMAGE" \
-        --set frontend.image.tag="$IMAGE_TAG" \
-        --set frontend.image.pullPolicy="Always" \
-        --set frontend.backendServiceName="$BACKEND_SERVICE_NAME" \
-        --wait \
-        --timeout "${HELM_TIMEOUT:-10m}"
+    echo "=== Step 5: Deploy / Upgrade via Helm ==="
+    helm upgrade --install "$HELM_RELEASE_NAME" helm/tasky-app --namespace="$HELM_NAMESPACE" --create-namespace --set global.releaseName="$HELM_RELEASE_NAME" --set global.imagePullSecret="$IMAGE_PULL_SECRET" --set backend.image.repository="$BACKEND_IMAGE" --set backend.image.tag="$IMAGE_TAG" --set backend.image.pullPolicy="Always" --set backend.database.host="$DB_HOST" --set backend.database.port="$DB_PORT" --set backend.database.name="$DB_NAME" --set backend.database.username="$DB_USER" --set backend.database.passwordSecret.name="$DB_PASSWORD_SECRET" --set backend.database.passwordSecret.key="$DB_PASSWORD_SECRET_KEY" --set postgresql.auth.database="$DB_NAME" --set postgresql.auth.username="$DB_USER" --set postgresql.auth.password="$POSTGRES_PASSWORD" --set vault.server.dev.devRootToken="$VAULT_DEV_ROOT_TOKEN" --set backend.vault.scheme="$VAULT_SCHEME" --set backend.vault.host="$VAULT_HOST" --set backend.vault.port="$VAULT_PORT" --set backend.vault.tokenSecret.name="$VAULT_TOKEN_SECRET" --set backend.vault.tokenSecret.key="$VAULT_TOKEN_SECRET_KEY" --set backend.corsAllowedOrigins="$CORS_ALLOWED_ORIGINS" --set frontend.image.repository="$FRONTEND_IMAGE" --set frontend.image.tag="$IMAGE_TAG" --set frontend.image.pullPolicy="Always" --set frontend.backendServiceName="$BACKEND_SERVICE_NAME" --wait --timeout "${HELM_TIMEOUT:-10m}"
 
-    - echo "=== Step 6: Verify rollout status ==="
-    - kubectl rollout status deployment/"$HELM_RELEASE_NAME"-backend --namespace="$HELM_NAMESPACE" --timeout=5m
-    - kubectl rollout status deployment/"$HELM_RELEASE_NAME"-frontend --namespace="$HELM_NAMESPACE" --timeout=5m
+    echo "=== Step 6: Verify rollout status ==="
+    kubectl rollout status deployment/"$HELM_RELEASE_NAME"-backend --namespace="$HELM_NAMESPACE" --timeout=5m
+    kubectl rollout status deployment/"$HELM_RELEASE_NAME"-frontend --namespace="$HELM_NAMESPACE" --timeout=5m
 
-    - echo "=== Step 7: Wait for DigitalOcean Load Balancer IP ==="
-    - |
-      for i in $(seq 1 36); do
-        EXTERNAL_IP=$(kubectl get svc "$HELM_RELEASE_NAME"-frontend -n "$HELM_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-        if [ -n "$EXTERNAL_IP" ]; then
-          echo "=========================================================="
-          echo "SUCCESS! Orange-ATOMIC is live at: http://$EXTERNAL_IP"
-          echo "Backend API at: http://$EXTERNAL_IP/api"
-          echo "=========================================================="
-          break
-        fi
-        echo "Waiting for DO Load Balancer IP (checking again in 10s)..."
-        sleep 10
-      done
+    echo "=== Step 7: Wait for DigitalOcean Load Balancer IP ==="
+    kubectl wait --for=jsonpath='{.status.loadBalancer.ingress[0].ip}' service/"$HELM_RELEASE_NAME"-frontend --namespace="$HELM_NAMESPACE" --timeout=6m 2>/dev/null
+    EXTERNAL_IP=$(kubectl get svc "$HELM_RELEASE_NAME"-frontend -n "$HELM_NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+    test -n "$EXTERNAL_IP" && echo "==========================================================" && echo "SUCCESS! Orange-ATOMIC is live at: http://$EXTERNAL_IP" && echo "Backend API at: http://$EXTERNAL_IP/api" && echo "=========================================================="
 
-    - kubectl get pods,svc -n "$HELM_NAMESPACE"
+    kubectl get pods,svc -n "$HELM_NAMESPACE"
   rules:
     - if: $CI_COMMIT_BRANCH == "$TARGET_BRANCH"
