@@ -93,15 +93,17 @@ deploy-to-do-k8s:
     - build-frontend
   before_script:
     - |
-      apk add --no-cache curl openssl ca-certificates gettext
+      apk add --no-cache curl openssl ca-certificates gettext bash
 
       KUBECTL_VERSION="${KUBECTL_VERSION:-v1.28.0}"
       curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
       chmod +x kubectl && mv kubectl /usr/local/bin/
 
       HELM_VERSION="${HELM_VERSION:-3.14.0}"
-      curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-      chmod 700 get_helm.sh && ./get_helm.sh --version "$HELM_VERSION" && rm get_helm.sh
+      curl -LO "https://get.helm.sh/helm-v$HELM_VERSION-linux-amd64.tar.gz"
+      tar -xzf "helm-v$HELM_VERSION-linux-amd64.tar.gz"
+      mv linux-amd64/helm /usr/local/bin/helm
+      rm -rf linux-amd64 "helm-v$HELM_VERSION-linux-amd64.tar.gz"
 
       mkdir -p ~/.kube
       echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
