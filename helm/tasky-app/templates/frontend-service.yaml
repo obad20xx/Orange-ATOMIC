@@ -4,6 +4,15 @@ metadata:
   name: {{ .Values.global.releaseName }}-frontend
   labels:
     app: {{ .Values.global.releaseName }}-frontend
+  annotations:
+    # Forces the LB to use HTTP instead of raw TCP for probing health
+    service.beta.kubernetes.io/do-loadbalancer-healthcheck-protocol: "http"
+    # Tells the LB to hit the root path
+    service.beta.kubernetes.io/do-loadbalancer-healthcheck-path: "/"
+    # Adjust check intervals to give it time to recover
+    service.beta.kubernetes.io/do-loadbalancer-healthcheck-check-interval-seconds: "10"
+    service.beta.kubernetes.io/do-loadbalancer-healthcheck-unhealthy-threshold: "3"
+    service.beta.kubernetes.io/do-loadbalancer-healthcheck-healthy-threshold: "2"
 spec:
   type: {{ .Values.frontend.service.type }}
   ports:

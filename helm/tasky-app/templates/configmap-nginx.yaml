@@ -12,7 +12,7 @@ data:
         root /usr/share/nginx/html;
         index index.html;
 
-        # Proxy API calls to the backend service
+        # Proxy API calls
         location /api/ {
             proxy_pass http://{{ .Values.frontend.backendServiceName }}:{{ .Values.backend.service.port }};
             proxy_set_header Host $host;
@@ -21,7 +21,7 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        # Proxy actuator/info endpoints to backend
+        # Proxy /infos
         location /infos {
             proxy_pass http://{{ .Values.frontend.backendServiceName }}:{{ .Values.backend.service.port }}/infos;
             proxy_set_header Host $host;
@@ -30,7 +30,31 @@ data:
             proxy_set_header X-Forwarded-Proto $scheme;
         }
 
-        # Handle Vue SPA routing - redirect all non-file requests to index.html
+        # 🚀 CLEAN MATCH: Matches /swagger-ui, /swagger-ui/, and /swagger-ui/index.html
+        location /swagger-ui {
+            proxy_pass http://{{ .Values.frontend.backendServiceName }}:{{ .Values.backend.service.port }};
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # 🚀 CLEAN MATCH: Matches /v3/api-docs and everything under it
+        location /v3/api-docs {
+            proxy_pass http://{{ .Values.frontend.backendServiceName }}:{{ .Values.backend.service.port }};
+            proxy_set_header Host $host;
+        }
+
+        # 🚀 CLEAN MATCH: Matches only the explicit health check path
+        location /actuator/health {
+            proxy_pass http://{{ .Values.frontend.backendServiceName }}:{{ .Values.backend.service.port }}/actuator/health;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # Handle Vue SPA routing fallback
         location / {
             try_files $uri $uri/ /index.html;
         }
