@@ -96,8 +96,6 @@ deploy-to-do-k8s:
       VAULT_HOST="${VAULT_HOST:-${HELM_RELEASE_NAME}-vault}"
       VAULT_PORT="${VAULT_PORT:-8200}"
       VAULT_DEV_ROOT_TOKEN="${VAULT_DEV_ROOT_TOKEN:-dev-only-root-token}"
-      VAULT_TOKEN_SECRET="${VAULT_TOKEN_SECRET:-${HELM_RELEASE_NAME}-vault-token}"
-      VAULT_TOKEN_SECRET_KEY="${VAULT_TOKEN_SECRET_KEY:-token}"
       CORS_ALLOWED_ORIGINS="${CORS_ALLOWED_ORIGINS:-*}"
       BACKEND_SERVICE_NAME="${BACKEND_SERVICE_NAME:-${HELM_RELEASE_NAME}-backend}"
       HELM_TIMEOUT="${HELM_TIMEOUT:-30m}"
@@ -131,21 +129,27 @@ deploy-to-do-k8s:
       --set postgresql.auth.database="$DB_NAME" \
       --set postgresql.auth.username="$DB_USER" \
       --set postgresql.auth.password="$POSTGRES_PASSWORD" \
-      --set vault.server.dev.devRootToken="$VAULT_DEV_ROOT_TOKEN" \
       --set backend.vault.scheme="$VAULT_SCHEME" \
       --set backend.vault.host="$VAULT_HOST" \
       --set backend.vault.port="$VAULT_PORT" \
-      --set backend.vault.tokenSecret.name="$VAULT_TOKEN_SECRET" \
-      --set backend.vault.tokenSecret.key="$VAULT_TOKEN_SECRET_KEY" \
+      --set backend.vault.devRootToken="$VAULT_DEV_ROOT_TOKEN" \
       --set backend.corsAllowedOrigins="$CORS_ALLOWED_ORIGINS" \
+      --set postgresql.primary.resources.requests.cpu="100m" \
+      --set postgresql.primary.resources.requests.memory="256Mi" \
+      --set postgresql.primary.resources.limits.cpu="500m" \
+      --set postgresql.primary.resources.limits.memory="512Mi" \
+      --set vault.server.dev.devRootToken="$VAULT_DEV_ROOT_TOKEN" \
+      --set vault.server.resources.requests.cpu="50m" \
+      --set vault.server.resources.requests.memory="128Mi" \
       --set frontend.image.repository="$FRONTEND_IMAGE" \
       --set frontend.image.tag="$IMAGE_TAG" \
       --set frontend.image.pullPolicy="Always" \
       --set frontend.backendServiceName="$BACKEND_SERVICE_NAME" \
       --timeout 5m
 
-    echo "=== Step 5: Wait for all Deployments to be ready (no client rate limiter) ==="
+    echo "=== Step 5: Wait for Deployments and StatefulSets to be ready ==="
     kubectl wait --for=condition=available deployment --all --namespace="$HELM_NAMESPACE" --timeout=60m
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=primary --namespace="$HELM_NAMESPACE" --timeout=60m
 
     echo "=== Step 6: Wait for DigitalOcean Load Balancer IP ==="
     kubectl wait --for=jsonpath='{.status.loadBalancer.ingress[0].ip}' service/"$HELM_RELEASE_NAME"-frontend --namespace="$HELM_NAMESPACE" --timeout=6m 2>/dev/null
