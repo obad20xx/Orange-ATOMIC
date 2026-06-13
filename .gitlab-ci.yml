@@ -1,77 +1,48 @@
 stages:
-  - lint
-  - package
-  - deploy
+  - cluster-check
+  - test-deploy
 
-variables:
-  # Use GitLab's built-in container registry
-  BACKEND_IMAGE: "$CI_REGISTRY_IMAGE/tasky-backend:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
-  FRONTEND_IMAGE: "$CI_REGISTRY_IMAGE/tasky-frontend:$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
-  DOCKER_HOST: tcp://docker:2375
-  DOCKER_TLS_CERTDIR: ""
-
+# Global configuration to provide a lightweight image containing kubectl
 default:
-  image: docker:24.0.6
-  services:
-    - docker:24.0.6-dind
+  image: bitnami/kubectl:1.28
+  entrypoint: [""]
+
+before_script:
+  - echo "Decoding DigitalOcean kubeconfig credentials..."
+  - mkdir -p ~/.kube
+  - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
+  - chmod 600 ~/.kube/config
 
 # ==========================================
-# STAGE 1: Linting & Quality Gates
+# STAGE 1: Verify Cluster Communication
 # ==========================================
-helm-lint:
-  stage: lint
-  image: 
-    name: alpine/helm:3.14.0
-    entrypoint: [""]
-  services: [] # No Docker-in-Docker needed for static analysis
+verify-cluster-connection:
+  stage: cluster-check
   script:
-    - echo "Validating Helm chart architecture..."
-    - helm lint ./helm/tasky-app
-  rules:
-    - changes:
-        - helm/tasky-app/**/*
+    - echo "Testing basic authentication to DigitalOcean API..."
+    - kubectl cluster-info
+    - echo "Listing current active worker nodes in the cluster:"
+    - kubectl get nodes
 
 # ==========================================
-# STAGE 2: Parallel Container Packaging
+# STAGE 2: Test Deployment using Raw Manifests
 # ==========================================
-build-backend:
-  stage: package
-  before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+deploy-test-nginx:
+  stage: test-deploy
   script:
-    - echo "Building and packaging backend microservice..."
-    - docker build -t $BACKEND_IMAGE ./ATOMIC-Backend
-    - docker push $BACKEND_IMAGE
-  rules:
-    - changes:
-        - ATOMIC-Backend/**/*
-
-build-frontend:
-  stage: package
-  before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-  script:
-    - echo "Building and packaging static frontend web server..."
-    - docker build -t $FRONTEND_IMAGE ./ATOMIC-Frontend
-    - docker push $FRONTEND_IMAGE
-  rules:
-    - changes:
-        - ATOMIC-Frontend/**/*
-
-# ==========================================
-# STAGE 3: Dry-Run / Infrastructure Deployment
-# ==========================================
-helm-dry-run:
-  stage: deploy
-  image: 
-    name: alpine/helm:3.14.0
-    entrypoint: [""]
-  services: []
-  script:
-    - echo "Simulating deployment onto target infrastructure..."
-    # Downloads external vendor dependencies dynamically 
-    - helm dependency update ./helm/tasky-app
-    # Verifies everything parses and compiles inside Helm cleanly
-    - helm install tasky-dry-run ./helm/tasky-app --dry-run=client --debug
+    - echo "Creating a temporary testing namespace..."
+    - kubectl create namespace pipeline-test-zone --dry-run=client -o yaml | kubectl apply -f -
+    
+    - echo "Deploying a public Nginx web server container from Docker Hub..."
+    - kubectl create deployment public-nginx-test --image=nginx:alpine --namespace=pipeline-test-zone --dry-run=client -o yaml | kubectl apply -f -
+    
+    - echo "Exposing the deployment internally to verify service mapping..."
+    - kubectl create service clusterip public-nginx-test --tcp=80:80 --namespace=pipeline-test-zone --dry-run=client -o yaml | kubectl apply -f -
+    
+    - echo "Checking deployment rollout status..."
+    - kubectl rollout status deployment/public-nginx-test --namespace=pipeline-test-zone --timeout=1m
+    
+    - echo "Deployment status successfully verified!"
+    - kubectl get pods,svc -n pipeline-test-zone
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
