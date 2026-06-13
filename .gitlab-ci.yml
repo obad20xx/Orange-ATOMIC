@@ -3,7 +3,7 @@ stages:
   - test-deploy
 
 default:
-  image: alpine:3.19 # ◄ Standard official Alpine Linux (Always available globally)
+  image: alpine:3.19
 
 before_script:
   - echo "Installing standard dependencies (curl & openssl)..."
@@ -31,7 +31,7 @@ verify-cluster-connection:
     - kubectl get nodes
 
 # ==========================================
-# STAGE 2: Test Deployment using Raw Manifests
+# STAGE 2: Test Deployment & Public Exposure
 # ==========================================
 deploy-test-nginx:
   stage: test-deploy
@@ -42,13 +42,28 @@ deploy-test-nginx:
     - echo "Deploying a public Nginx web server container from Docker Hub..."
     - kubectl create deployment public-nginx-test --image=nginx:alpine --namespace=pipeline-test-zone --dry-run=client -o yaml | kubectl apply -f -
     
-    - echo "Exposing the deployment internally to verify service mapping..."
-    - kubectl create service clusterip public-nginx-test --tcp=80:80 --namespace=pipeline-test-zone --dry-run=client -o yaml | kubectl apply -f -
+    - echo "Exposing the deployment via a DigitalOcean Cloud Load Balancer..."
+    # Changed from 'clusterip' to 'loadbalancer' to trigger public infrastructure creation
+    - kubectl create service loadbalancer public-nginx-test --tcp=80:80 --namespace=pipeline-test-zone --dry-run=client -o yaml | kubectl apply -f -
     
     - echo "Checking deployment rollout status..."
     - kubectl rollout status deployment/public-nginx-test --namespace=pipeline-test-zone --timeout=1m
     
-    - echo "Deployment status successfully verified!"
+    - echo "Waiting for DigitalOcean to allocate your public IP address..."
+    # This loop polls the service for up to 2 minutes until DigitalOcean finishes provisioning the IP
+    - |
+      for i in $(seq 1 24); do
+        EXTERNAL_IP=$(kubectl get svc public-nginx-test -n pipeline-test-zone -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        if [ -n "$EXTERNAL_IP" ]; then
+          echo "========================================================="
+          echo "SUCCESS! Your Nginx test app is live at: http://$EXTERNAL_IP"
+          echo "========================================================="
+          break
+        fi
+        echo "Still waiting for DigitalOcean IP allocation (Checking again in 5s)..."
+        sleep 5
+      done
+
     - kubectl get pods,svc -n pipeline-test-zone
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
