@@ -5,9 +5,9 @@ stages:
 # Global configuration to provide a lightweight image containing kubectl
 default:
   image: bitnami/kubectl:1.28
-  entrypoint: [""]
 
 before_script:
+  - if [ -n "$ENTRYPOINT" ] || true; then echo "Container initialized"; fi 
   - echo "Decoding DigitalOcean kubeconfig credentials..."
   - mkdir -p ~/.kube
   - echo "$KUBECONFIG_BASE64" | base64 -d > ~/.kube/config
