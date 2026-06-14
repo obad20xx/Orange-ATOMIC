@@ -23,6 +23,44 @@ spec:
         runAsUser: {{ .Values.backend.securityContext.runAsUser }}
       {{- if .Values.backend.database.host }}
       initContainers:
+        - name: init-vault-secrets
+          image: curlimages/curl:8.6.0
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Vault to be ready..."
+              until curl --silent --fail "$VAULT_URI/v1/sys/health" > /dev/null; do
+                sleep 2
+              done
+              echo "Vault is reachable. Writing database credentials..."
+              curl --silent --fail \
+                --header "X-Vault-Token: $VAULT_TOKEN" \
+                --request POST \
+                --data "{\"data\": {\"spring.datasource.username\": \"$DB_USER\", \"spring.datasource.password\": \"$DB_PASSWORD\"}}" \
+                "$VAULT_URI/v1/secret/data/atomic-backend"
+              echo "Vault secrets successfully initialized!"
+          env:
+            - name: VAULT_URI
+              value: "{{ .Values.backend.vault.scheme }}://{{ .Values.backend.vault.host }}:{{ .Values.backend.vault.port }}"
+            {{- if .Values.backend.vault.tokenSecret.name }}
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.vault.tokenSecret.name }}
+                  key: {{ .Values.backend.vault.tokenSecret.key }}
+            {{- else if .Values.backend.vault.devRootToken }}
+            - name: VAULT_TOKEN
+              value: {{ .Values.backend.vault.devRootToken | quote }}
+            {{- end }}
+            - name: DB_USER
+              value: {{ .Values.backend.database.username | quote }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backend.database.passwordSecret.name }}
+                  key: {{ .Values.backend.database.passwordSecret.key }}
+
         - name: wait-for-postgres
           image: busybox:1.36
           command:
@@ -65,13 +103,8 @@ spec:
           env:
             - name: SPRING_DATASOURCE_URL
               value: "jdbc:postgresql://{{ .Values.backend.database.host }}:{{ .Values.backend.database.port }}/{{ .Values.backend.database.name }}"
-            - name: SPRING_DATASOURCE_USERNAME
-              value: {{ .Values.backend.database.username | quote }}
-            - name: SPRING_DATASOURCE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.backend.database.passwordSecret.name }}
-                  key: {{ .Values.backend.database.passwordSecret.key }}
+            - name: VAULT_ENABLED
+              value: "true"
             {{- if .Values.backend.vault.tokenSecret.name }}
             - name: VAULT_TOKEN
               valueFrom:
