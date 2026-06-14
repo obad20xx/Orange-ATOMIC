@@ -1,58 +1,47 @@
-### Step 1: Environment & API Client Configuration
+# Frontend Architecture & Design Document
 
-* **Details:** We need a clean, centralized Axios configuration (or native `fetch` wrapper) that reads the backend URL from environment variables. It must handle routing base prefixes correctly (e.g., handling `/api` and `/infos`).
-* **Copilot Context:** Create a file named `src/services/api.js`.
-* **Copilot Prompt:**
-> "Create a lightweight API service module using Axios (or native fetch) for a Vue 3 application. It should read the base URL from `import.meta.env.VITE_API_BASE_URL`. Implement two clean, asynchronous export functions: `getSystemInfos()` which hits `/infos`, and `getTasks()` / `updateTaskStatus(id, status, user)` which hit the `/api/tasks` endpoints. Include basic interceptors or try/catch blocks to gracefully pass backend error messages to the UI."
+## 1. Architectural Overview
+The **ATOMIC-Frontend** is built as a highly responsive Single Page Application (SPA) leveraging **Vue 3** and the **Composition API**. It is built and bundled using **Vite** for unparalleled development speed and optimized production assets. The UI adheres to modern, clean web aesthetics using pure, scalable CSS without relying on heavy UI libraries, prioritizing performance and tailored styling.
 
+## 2. Technology Stack & Rationale
+*   **Vue 3 (Composition API):** Utilizing `<script setup>` syntax provides a clean, reactive, and highly readable component structure.
+*   **Vite:** Serves as the build tool, enabling Hot Module Replacement (HMR) during development and generating highly optimized, cacheable static assets for production.
+*   **Axios / Native Fetch wrapper:** Centralizes all HTTP interactions in a dedicated service layer to manage responses and intercepts uniformly.
+*   **Nginx:** In production, the static assets are served via a hardened Nginx container that also acts as a reverse proxy to eliminate CORS overhead.
 
+## 3. Component Hierarchy & Design
 
----
+The application avoids a monolithic structure by strictly dividing responsibilities into cohesive components:
 
-### Step 2: The Core Components (Simple but Powerful UI)
+### 3.1 `App.vue` (The Orchestrator)
+Acts as the central state manager and layout wrapper.
+*   Maintains the reactive master `tasks` list.
+*   Passes data down to child components via `props`.
+*   Listens for state-mutating events (like `onTaskCreate` or `onStatusChange`) from children to ensure unidirectional data flow.
+*   Handles global error catching and displays dismissible error banners.
 
-To avoid a monolithic, messy `App.vue`, we will break the dashboard down into three highly cohesive components.
+### 3.2 `SystemInfo.vue` (Infrastructure Auditing)
+Directly satisfies the integration requirement for the external service (HashiCorp Vault).
+*   **Lifecycle:** Automatically fetches system info (`/infos`) on `onMounted`.
+*   **Resilient UX:** Displays contextual banners (Loading, Success, or a graceful Warning if Vault is unreachable) based on the backend's circuit breaker response.
 
-#### 2.1: The System Info Banner (`components/SystemInfo.vue`)
+### 3.3 `TaskBoard.vue` (Kanban Visualization)
+A highly organized visualization layer displaying tasks by status (`TODO`, `IN_PROGRESS`, `DONE`).
+*   **Responsiveness:** Adapts dynamically to viewport sizes.
+*   **Auditing Display:** Prominently renders the `createdBy` and conditional `lastModifiedBy` fields returned from the backend DTOs.
+*   **Interactivity:** Emits actionable events (`onStatusChange`, `onDeleteTask`) back to the orchestrator.
 
-* **Details:** This component satisfies the core interview requirement: calling `/infos` and displaying the external service (Vault) metadata.
-* **Copilot Prompt:**
-> "Create a Vue 3 component named `SystemInfo.vue` using `<script setup>`. It should call the `getSystemInfos` API service on lifecycle mount. Show a loading spinner state while fetching, a beautifully styled alert banner displaying the system metadata on success, and a graceful, amber-colored fallback alert if the backend reports that the external Vault service is down/unreachable."
+### 3.4 `TaskForm.vue` (Data Entry)
+A lightweight component dedicated to capturing user input.
+*   **Validation:** Implements client-side validation logic that mirrors the backend's Jakarta Validation constraints, preventing malformed payloads from ever hitting the network.
 
+## 4. API Integration Strategy
 
+All backend communications are abstracted into `src/services/api.js`.
+*   **Relative Routing:** In production, the `VITE_API_BASE_URL` is set to `/`. This forces the Vue application to make relative API calls (e.g., `/api/tasks`). Nginx then intercepts and routes these requests directly to the internal backend Kubernetes service. This elegant proxy strategy completely eliminates CORS complexity and preflight request overhead.
+*   **Error Propagation:** The service layer standardizes error handling, catching HTTP exceptions and formatting them into readable messages that the Vue reactive state can easily display in the UI.
 
-#### 2.2: The Task Board (`components/TaskBoard.vue`)
-
-* **Details:** A clean Kanban-style or categorized board displaying tasks by status (`TODO`, `IN_PROGRESS`, `DONE`). It must explicitly display: Task Title, Description, Who added it (`createdBy`), and Who last changed it (`lastModifiedBy`).
-* **Copilot Prompt:**
-> "Create a Vue 3 component named `TaskBoard.vue` using `<script setup>`. It accepts an array of tasks as a prop and emits an `onStatusChange` event. Divide the layout into three distinct visual columns: 'To Do', 'In Progress', and 'Done'. Each task item must be rendered inside a clean card showing the title, description, a badge for 'Created By: [user]', and a conditional badge showing 'Last Modified By: [user]' if it has been modified."
-
-
-
-#### 2.3: Quick Action Form (`components/TaskForm.vue`)
-
-* **Details:** A simple inline form or modal to add a new task, ensuring client-side validation matches our backend constraints.
-* **Copilot Prompt:**
-> "Create a simple Vue 3 form component named `TaskForm.vue` using `<script setup>` and template validation. It should contain inputs for Title, Description, and Creator Name. Prevent submission if fields are empty, and emit an `onTaskCreate` event with the payload when valid."
-
-
-
----
-
-### Step 3: Stitching it Together (`App.vue`)
-
-* **Details:** The single-page brain of **Tasky**. It orchestrates state management, aggregates API responses, and handles user interactions seamlessly.
-* **Copilot Context:** Open `src/App.vue`. Keep your `src/services/api.js` open in a split tab so Copilot sees the available methods.
-* **Copilot Prompt:**
-> "Write the primary single-page dashboard interface in `App.vue` using Vue 3 `<script setup>`. Import `SystemInfo.vue`, `TaskBoard.vue`, and `TaskForm.vue`. Manage a reactive global state for the master `tasks` list. Implement handler functions to catch emitted events: fetching the latest task state from the backend server on initialization, posting a new task, and updating a task's status while updating the auditor tracking field. Style the overall layout using a clean, professional dark-mode grid."
-
-
-
----
-
-### Step 4: Unit Testing the Frontend
-
-* **Details:** The prompt requires unit tests on *either* the backend or frontend. Since we are implementing backend tests in Milestone 1, adding even 1 or 2 quick component tests on the frontend via **Vitest** and **Vue Test Utils** will completely solidify your status as a thorough engineer.
-* **Copilot Context:** Create a file named `src/components/__tests__/SystemInfo.spec.js`.
-* **Copilot Prompt:**
-> "Write a unit test using Vitest and `@vue/test-utils` for the `SystemInfo.vue` component. Mock the API service module to simulate a successful response returning system data. Assert that the loading indicator disappears and the correct system metadata is rendered in the DOM interface."
+## 5. Testing & Quality Assurance
+The frontend utilizes **Vitest** and **Vue Test Utils** to ensure component reliability.
+*   **Component Isolation:** Tests (e.g., `SystemInfo.spec.js`) isolate components by mocking the `api.js` service module.
+*   **DOM Assertion:** Tests verify that given a specific mocked API response, the correct HTML elements (such as success or error banners) render correctly in the virtual DOM.
