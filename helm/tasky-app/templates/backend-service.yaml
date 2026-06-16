@@ -1,9 +1,10 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Values.global.releaseName }}-backend
+  name: {{ include "tasky.releaseName" . }}-backend
   labels:
-    app: {{ .Values.global.releaseName }}-backend
+    {{- include "tasky.labels" . | nindent 4 }}
+    {{- include "tasky.backend.selectorLabels" . | nindent 4 }}
 spec:
   type: {{ .Values.backend.service.type }}
   ports:
@@ -12,4 +13,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    app: {{ .Values.global.releaseName }}-backend
+    {{- include "tasky.backend.selectorLabels" . | nindent 4 }}

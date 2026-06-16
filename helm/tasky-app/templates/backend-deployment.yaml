@@ -1,26 +1,31 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Values.global.releaseName }}-backend
+  name: {{ include "tasky.releaseName" . }}-backend
   labels:
-    app: {{ .Values.global.releaseName }}-backend
+    {{- include "tasky.labels" . | nindent 4 }}
+    {{- include "tasky.backend.selectorLabels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.backend.replicaCount }}
   selector:
     matchLabels:
-      app: {{ .Values.global.releaseName }}-backend
+      {{- include "tasky.backend.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        app: {{ .Values.global.releaseName }}-backend
+        {{- include "tasky.labels" . | nindent 8 }}
+        {{- include "tasky.backend.selectorLabels" . | nindent 8 }}
     spec:
       {{- if .Values.global.imagePullSecret }}
       imagePullSecrets:
         - name: {{ .Values.global.imagePullSecret }}
       {{- end }}
+      # FIX 5: Pod-level security context with seccomp
       securityContext:
         runAsNonRoot: {{ .Values.backend.securityContext.runAsNonRoot }}
         runAsUser: {{ .Values.backend.securityContext.runAsUser }}
+        seccompProfile:
+          type: RuntimeDefault
       {{- if .Values.backend.database.host }}
       initContainers:
         - name: init-vault-secrets
@@ -80,8 +85,17 @@ spec:
       {{- end }}
       containers:
         - name: backend
-          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          # FIX 2: required guard — fails fast at helm install if image not set
+          image: "{{ required "backend.image.repository is required — set via --set backend.image.repository" .Values.backend.image.repository }}:{{ required "backend.image.tag is required — set via --set backend.image.tag" .Values.backend.image.tag }}"
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          # FIX 5: Container-level security hardening
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # Note: readOnlyRootFilesystem is intentionally omitted for backend
+            # because the JVM writes to /tmp. Mount an emptyDir at /tmp if you
+            # need to enable it.
           ports:
             - containerPort: {{ .Values.backend.service.port }}
               name: http
@@ -92,17 +106,24 @@ spec:
             initialDelaySeconds: {{ .Values.backend.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.backend.livenessProbe.periodSeconds }}
             failureThreshold: {{ .Values.backend.livenessProbe.failureThreshold }}
+          # FIX 9: readinessProbe now includes failureThreshold and successThreshold
           readinessProbe:
             httpGet:
               path: {{ .Values.backend.healthEndpoint }}
               port: {{ .Values.backend.service.port }}
             initialDelaySeconds: {{ .Values.backend.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.backend.readinessProbe.periodSeconds }}
+            failureThreshold: {{ .Values.backend.readinessProbe.failureThreshold }}
+            successThreshold: {{ .Values.backend.readinessProbe.successThreshold }}
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           env:
+            # FIX 3: SPRING_DATASOURCE_URL is now gated on database.host
+            # Previously it always rendered even with empty host → "jdbc:postgresql://:5432/"
+            {{- if .Values.backend.database.host }}
             - name: SPRING_DATASOURCE_URL
               value: "jdbc:postgresql://{{ .Values.backend.database.host }}:{{ .Values.backend.database.port }}/{{ .Values.backend.database.name }}"
+            {{- end }}
             - name: VAULT_ENABLED
               value: "true"
             {{- if .Values.backend.vault.tokenSecret.name }}

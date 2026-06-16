@@ -1,17 +1,30 @@
 apiVersion: v2
 name: tasky-app
-description: A Helm chart for Kubernetes
-
+description: "ATOMIC Tasky — Spring Boot 3 + Vue 3 cloud-native task management application"
 type: application
 
-version: 0.1.0
+# Chart version — increment on every chart change
+version: 0.2.0
 
-appVersion: "1.16.0"
+# Application version — matches Spring Boot app version
+appVersion: "0.0.1-SNAPSHOT"
+
+maintainers:
+  - name: Orange ATOMIC Team
+
+keywords:
+  - task-management
+  - spring-boot
+  - vue3
+  - postgresql
+  - vault
 
 dependencies:
   - name: postgresql
-    version: "15.x.x"
+    version: "15.5.38"
     repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
   - name: vault
-    version: "0.28.x"
+    version: "0.28.1"
     repository: "https://helm.releases.hashicorp.com"
+    condition: vault.enabled

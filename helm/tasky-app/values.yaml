@@ -17,11 +17,11 @@ global:
 backend:
   replicaCount: 1
 
+  # FIX 1: Corrected image structure — was double-nested backend.image.image.*
+  # Set backend.image.repository and backend.image.tag at deploy time via --set
   image:
-    image:
-      registry: docker.io
-      repository: bitnamilegacy/postgresql
-      tag: 16.4.0-debian-12-r9
+    repository: ""        # e.g. registry.gitlab.com/your-group/atomic-backend
+    tag: "latest"
     pullPolicy: IfNotPresent
 
   service:
@@ -39,9 +39,12 @@ backend:
     periodSeconds: 10
     failureThreshold: 3
 
+  # FIX 9: Added missing failureThreshold and successThreshold
   readinessProbe:
     initialDelaySeconds: 15
     periodSeconds: 10
+    failureThreshold: 3
+    successThreshold: 1
 
   resources:
     limits:
@@ -101,10 +104,29 @@ frontend:
   service:
     type: LoadBalancer
     port: 80
+    # FIX 6: DO annotations moved to values for cloud portability
+    # Override with {} to disable, or replace keys for AWS/GKE
+    annotations:
+      service.beta.kubernetes.io/do-loadbalancer-healthcheck-protocol: "http"
+      service.beta.kubernetes.io/do-loadbalancer-healthcheck-path: "/"
+      service.beta.kubernetes.io/do-loadbalancer-healthcheck-check-interval-seconds: "10"
+      service.beta.kubernetes.io/do-loadbalancer-healthcheck-unhealthy-threshold: "3"
+      service.beta.kubernetes.io/do-loadbalancer-healthcheck-healthy-threshold: "2"
 
   # The internal Kubernetes service name of the backend
   # (the Nginx proxy_pass target)
   backendServiceName: ""  # e.g. orange-atomic-backend
+
+  # FIX 4: Frontend health probe values
+  livenessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 3
+    periodSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
 
   resources:
     limits:
@@ -113,3 +135,13 @@ frontend:
     requests:
       cpu: 100m
       memory: 128Mi
+
+# ============================================================================
+# SUB-CHART TOGGLES — FIX 8: condition flags for postgresql and vault
+# Set to false to skip deploying the sub-chart (e.g. using an external DB)
+# ============================================================================
+postgresql:
+  enabled: true
+
+vault:
+  enabled: true
