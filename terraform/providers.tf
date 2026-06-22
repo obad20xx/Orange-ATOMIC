@@ -31,7 +31,7 @@ terraform {
   # via the partial configuration in this block. Operators must ensure the
   # Storage Account and container exist before running `terraform init`.
   backend "azurerm" {
-    resource_group_name  = "rg-atomic-tfstate"
+    resource_group_name  = "ERAMOVA"
     storage_account_name = "atomicterraformstate"
     container_name       = "tfstate"
     key                  = "atomic-tasky.tfstate"

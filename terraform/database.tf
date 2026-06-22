@@ -76,10 +76,9 @@ resource "azurerm_postgresql_flexible_server" "main" {
   #   - enable_public_access = true → adds a public endpoint alongside VNet access
   public_network_access_enabled = var.enable_public_access
 
-  # High availability is disabled for cost (Burstable tier does not support HA)
-  high_availability {
-    mode = "Disabled"
-  }
+  # Note: high_availability is intentionally omitted.
+  # The Burstable compute tier (Standard_B1ms) does not support any HA mode.
+  # ZoneRedundant and SameZone HA require GeneralPurpose or MemoryOptimized tiers.
 
   # Backup retention
   backup_retention_days = 7

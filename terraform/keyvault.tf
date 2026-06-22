@@ -15,7 +15,9 @@ data "azurerm_client_config" "current" {}
 # Name: max 24 chars, alphanumeric + hyphens, globally unique
 # ---------------------------------------------------------------------------
 resource "azurerm_key_vault" "main" {
-  name                = "kv-${replace(local.name_prefix, "-", "")}${random_id.suffix.hex}"
+  # Name formula: 'kv-' (3) + project without hyphens (max 10) + hex suffix (6) = max 19 chars
+  # e.g. 'kv-atomictasky1a2b3c' — well within the 3-24 char Azure limit.
+  name                = "kv-${replace(var.project, "-", "")}${random_id.suffix.hex}"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
 

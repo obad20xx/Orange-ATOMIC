@@ -56,11 +56,16 @@ resource "azurerm_kubernetes_cluster" "main" {
   }
 
   # ---------------------------------------------------------------------------
-  # Azure RBAC — Kubernetes API access governed by Azure AD roles (REQ-4.2)
+  # Azure RBAC — Kubernetes API access governed by Azure AD / Entra ID (REQ-4.2)
+  # managed = true selects AKS-managed Entra integration (replaces legacy AAD).
+  # tenant_id is required by azurerm v3.x alongside managed = true.
+  # admin_group_object_ids is left empty so RBAC is governed by Azure role
+  # assignments on the AKS resource rather than a specific AAD group.
   # ---------------------------------------------------------------------------
   azure_active_directory_role_based_access_control {
     managed            = true
     azure_rbac_enabled = true
+    tenant_id          = data.azurerm_client_config.current.tenant_id
   }
 
   # ---------------------------------------------------------------------------
@@ -80,6 +85,11 @@ resource "azurerm_kubernetes_cluster" "main" {
     network_policy    = "azure"
     load_balancer_sku = "standard"
     outbound_type     = "loadBalancer"
+
+    # Must be outside the VNet address space (10.0.0.0/16) to avoid
+    # ServiceCidrOverlapExistingSubnetsCidr. Using 10.100.0.0/16.
+    service_cidr   = "10.100.0.0/16"
+    dns_service_ip = "10.100.0.10"
   }
 
   tags = local.common_tags

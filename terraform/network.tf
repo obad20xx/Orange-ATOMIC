@@ -39,8 +39,9 @@ resource "azurerm_subnet" "aks" {
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [var.aks_subnet_cidr]
 
-  # AKS requires this service endpoint for API server communication
-  service_endpoints = ["Microsoft.ContainerRegistry"]
+  # AKS requires ContainerRegistry endpoint for image pulls without stored creds.
+  # KeyVault endpoint is required so the Key Vault network ACL can reference this subnet.
+  service_endpoints = ["Microsoft.ContainerRegistry", "Microsoft.KeyVault"]
 }
 
 # ---------------------------------------------------------------------------
