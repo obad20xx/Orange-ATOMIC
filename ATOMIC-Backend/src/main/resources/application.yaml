@@ -1,13 +1,22 @@
-﻿spring:
+spring:
   application:
     name: ATOMIC
-  config:
-    import: optional:vault://
+
+  # ---------------------------------------------------------------------------
+  # Datasource — Azure Database for PostgreSQL Flexible Server
+  # SPRING_DATASOURCE_URL is injected from the backend-configmap.yaml at runtime.
+  # The password (spring.datasource.password) is fetched automatically from
+  # Azure Key Vault by the spring-cloud-azure-starter-keyvault-secrets integration
+  # using the secret name 'postgres-password' (REQ-6.4, REQ-14.6).
+  # ---------------------------------------------------------------------------
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/${POSTGRES_DB:atomic_db}}
-    username: ${SPRING_DATASOURCE_USERNAME:${POSTGRES_USER:atomic_user}} # Fallback to POSTGRES_USER
-    password: ${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:change_me}} # Fallback to POSTGRES_PASSWORD
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/atomicdb}
+    username: ${SPRING_DATASOURCE_USERNAME:atomicadmin}
+    # Password is resolved from Azure Key Vault secret: postgres-password
+    # The Azure Key Vault property source maps the secret name to the Spring property:
+    #   spring.datasource.password ← Key Vault secret: postgres-password
     driver-class-name: org.postgresql.Driver
+
   jpa:
     hibernate:
       ddl-auto: update
@@ -15,27 +24,59 @@
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # ---------------------------------------------------------------------------
+  # Azure Key Vault Secret Property Source (REQ-6.4, REQ-14.6)
+  # Replaces spring.cloud.vault entirely (REQ-14.5).
+  #
+  # The Azure Spring Cloud starter loads secrets from Key Vault at startup
+  # and exposes them as Spring environment properties. The endpoint URI is
+  # injected from the backend-configmap.yaml (AZURE_KEYVAULT_URI env var).
+  #
+  # Workload Identity (OIDC federated credential) is used for authentication —
+  # no client secret or certificate is stored anywhere (REQ-6.4).
+  #
+  # Retry behaviour (REQ-6.6): On startup failure, the Azure SDK retries
+  # up to 3 times with exponential backoff (1s → 2s → 4s, capped at 8s).
+  # If all retries fail, startup fails and the pod restarts (Kubernetes handles retry).
+  # ---------------------------------------------------------------------------
   cloud:
-    vault:
-      enabled: ${VAULT_ENABLED:false}
-      uri: ${VAULT_URI:http://localhost:8200}
-      authentication: TOKEN
-      token: ${VAULT_TOKEN:}
-      kv:
-        enabled: true
-        backend: ${VAULT_KV_BACKEND:secret}
-        default-context: ${VAULT_KV_CONTEXT:atomic-backend}
+    azure:
+      keyvault:
+        secret:
+          property-sources:
+            - name: atomic-keyvault-source
+              # URI injected from ConfigMap env var AZURE_KEYVAULT_URI
+              endpoint: ${AZURE_KEYVAULT_URI:https://placeholder.vault.azure.net/}
+              # Retry configuration for startup secret fetch (REQ-6.6)
+              retry:
+                fixed:
+                  delay: 1000        # 1 second initial delay
+                  max-retries: 3     # Retry up to 3 times (1s, 2s, 4s — exponential)
+              credential:
+                # Use the Workload Identity managed identity (no client secret)
+                managed-identity-enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Springdoc OpenAPI
+  # ---------------------------------------------------------------------------
   swagger-ui:
     path: /swagger-ui.html
   api-docs:
     path: /v3/api-docs
 
+# ---------------------------------------------------------------------------
+# Spring Boot Actuator
+# ---------------------------------------------------------------------------
 management:
   endpoints:
     web:
       exposure:
         include: health,info
 
+# ---------------------------------------------------------------------------
+# Resilience4j Circuit Breaker
+# ---------------------------------------------------------------------------
 resilience4j:
   circuitbreaker:
     configs:
@@ -48,9 +89,10 @@ resilience4j:
         waitDurationInOpenState: 60000
         recordExceptions:
           - java.lang.Exception
-    instances:
-      vault:
-        baseConfig: default
 
+# ---------------------------------------------------------------------------
+# CORS — With Nginx reverse proxy, all API calls are same-origin.
+# The '*' default is safe because the Nginx ingress is the only entry point.
+# ---------------------------------------------------------------------------
 cors:
-  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:*}

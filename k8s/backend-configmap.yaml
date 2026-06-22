@@ -1,0 +1,36 @@
+##############################################################################
+# backend-configmap.yaml
+# Supplies non-secret environment variables to the Backend pod.
+# Secret values (database password, credentials) are fetched directly
+# from Azure Key Vault by the Spring Boot application at startup via
+# the spring-cloud-azure-starter-keyvault-secrets integration (REQ-7.4).
+#
+# NOTE: FLEXIBLE_SERVER_FQDN and AZURE_KEYVAULT_URI placeholders are
+# substituted by the pipeline from Terraform outputs before kubectl apply.
+##############################################################################
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-configmap
+  namespace: production
+  labels:
+    app: backend
+    managed-by: azure-pipelines
+data:
+  # JDBC URL for PostgreSQL Flexible Server via private DNS (REQ-7.4, REQ-5.5)
+  # Format: jdbc:postgresql://<server-name>.postgres.database.azure.com:5432/atomicdb
+  # Substituted by pipeline: $(FLEXIBLE_SERVER_FQDN)
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://${FLEXIBLE_SERVER_FQDN}:5432/atomicdb"
+
+  # Azure Key Vault URI — consumed by spring-cloud-azure-starter-keyvault-secrets
+  # Substituted by pipeline: $(KEY_VAULT_URI)
+  AZURE_KEYVAULT_URI: "${KEY_VAULT_URI}"
+
+  # Spring datasource username — the PostgreSQL admin login (non-secret)
+  SPRING_DATASOURCE_USERNAME: "atomicadmin"
+
+  # CORS — with Nginx reverse proxy, origins are always same-origin
+  CORS_ALLOWED_ORIGINS: "*"
+
+  # Spring profiles
+  SPRING_PROFILES_ACTIVE: "production"

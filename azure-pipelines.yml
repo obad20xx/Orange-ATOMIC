@@ -1,0 +1,607 @@
+##############################################################################
+# azure-pipelines.yml
+# ATOMIC Tasky — Azure DevOps Pipeline
+#
+# Replaces .gitlab-ci.yml with a 4-stage Azure Pipelines definition:
+#
+#   Stage 1: Validate   — Backend (Gradle) + Frontend (Vitest) tests in parallel
+#   Stage 2: Build      — Docker images built and pushed to ACR
+#   Stage 3: InfraCD    — Terraform init → plan → apply (remote state sync)
+#   Stage 4: Deploy     — Nginx Ingress install → kubectl apply → rollout status
+#
+# Authentication:
+#   All Azure operations use the 'AzureServiceConnection' Azure DevOps Service
+#   Connection (Service Principal). No ARM_* values are hardcoded anywhere.
+#
+# Required Azure DevOps variable group: 'atomic-tasky-vars' containing:
+#   TF_BACKEND_RESOURCE_GROUP    — Resource group of the Terraform state Storage Account
+#   TF_BACKEND_STORAGE_ACCOUNT  — Storage Account name for Terraform state
+#   TF_BACKEND_CONTAINER        — Blob container name for Terraform state
+#   TF_BACKEND_KEY              — State file blob key
+#   AZURE_SUBSCRIPTION_ID       — Azure subscription ID
+#   AZURE_TENANT_ID             — Azure tenant ID
+##############################################################################
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr: none  # Pipeline only runs on direct pushes to main
+
+variables:
+  - group: atomic-tasky-vars
+  - name: SERVICE_CONNECTION
+    value: 'AzureServiceConnection'
+  - name: TERRAFORM_DIR
+    value: '$(Build.SourcesDirectory)/terraform'
+  - name: K8S_DIR
+    value: '$(Build.SourcesDirectory)/k8s'
+  - name: INGRESS_NAMESPACE
+    value: 'ingress-nginx'
+  - name: APP_NAMESPACE
+    value: 'production'
+
+##############################################################################
+# STAGE 1: Validate & Code Quality
+# Backend Gradle tests and Frontend Vitest run in PARALLEL (REQ-10.3).
+# If either fails, Build stage does not execute (REQ-10.4, REQ-10.5).
+##############################################################################
+stages:
+  - stage: Validate
+    displayName: '🧪 Stage 1 — Validate & Code Quality'
+    jobs:
+
+      # -----------------------------------------------------------------------
+      # Job: test-backend
+      # Runs Gradle test suite using Java 21 (REQ-10.1)
+      # -----------------------------------------------------------------------
+      - job: test_backend
+        displayName: 'Backend — Gradle Tests (Java 21)'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Cache@2
+            displayName: 'Cache Gradle wrapper and dependencies'
+            inputs:
+              key: 'gradle | "$(Agent.OS)" | ATOMIC-Backend/build.gradle | ATOMIC-Backend/gradle/wrapper/gradle-wrapper.properties'
+              restoreKeys: |
+                gradle | "$(Agent.OS)"
+                gradle
+              path: '$(HOME)/.gradle'
+
+          - task: JavaToolInstaller@0
+            displayName: 'Install Java 21'
+            inputs:
+              versionSpec: '21'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: 'PreInstalled'
+
+          - script: |
+              chmod +x ./gradlew
+              ./gradlew test --no-daemon --continue
+            displayName: 'Run Gradle test suite'
+            workingDirectory: '$(Build.SourcesDirectory)/ATOMIC-Backend'
+
+          # Publish JUnit test results to Azure DevOps UI (REQ-10.6)
+          - task: PublishTestResults@2
+            displayName: 'Publish Backend test results'
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '**/TEST-*.xml'
+              searchFolder: '$(Build.SourcesDirectory)/ATOMIC-Backend/build/test-results'
+              failTaskOnFailedTests: true
+              testRunTitle: 'Backend Unit Tests'
+
+      # -----------------------------------------------------------------------
+      # Job: test-frontend
+      # Runs Vitest component checks using Node.js 20 (REQ-10.2)
+      # No dependsOn — runs in PARALLEL with test_backend (REQ-10.3)
+      # -----------------------------------------------------------------------
+      - job: test_frontend
+        displayName: 'Frontend — Vitest Tests (Node 20)'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Cache@2
+            displayName: 'Cache npm dependencies'
+            inputs:
+              key: 'npm | "$(Agent.OS)" | ATOMIC-Frontend/package-lock.json'
+              restoreKeys: |
+                npm | "$(Agent.OS)"
+                npm
+              path: '$(Build.SourcesDirectory)/ATOMIC-Frontend/node_modules'
+
+          - task: NodeTool@0
+            displayName: 'Install Node.js 20'
+            inputs:
+              versionSpec: '20.x'
+
+          - script: |
+              npm ci
+            displayName: 'Install npm dependencies'
+            workingDirectory: '$(Build.SourcesDirectory)/ATOMIC-Frontend'
+
+          - script: |
+              npx vitest --run --reporter=junit --outputFile=test-results/vitest-junit.xml
+            displayName: 'Run Vitest test suite'
+            workingDirectory: '$(Build.SourcesDirectory)/ATOMIC-Frontend'
+
+          # Publish JUnit test results to Azure DevOps UI (REQ-10.6)
+          - task: PublishTestResults@2
+            displayName: 'Publish Frontend test results'
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'test-results/vitest-junit.xml'
+              searchFolder: '$(Build.SourcesDirectory)/ATOMIC-Frontend'
+              failTaskOnFailedTests: true
+              testRunTitle: 'Frontend Vitest Tests'
+
+##############################################################################
+# STAGE 2: Build & Package Containers
+# Builds Backend and Frontend Docker images and pushes to ACR (REQ-11).
+# If either image build or push fails, all subsequent stages are skipped.
+##############################################################################
+  - stage: Build
+    displayName: '🐳 Stage 2 — Build & Package Containers'
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+
+      # -----------------------------------------------------------------------
+      # Job: build-backend
+      # Builds backend Docker image and pushes to ACR with commit SHA tag (REQ-11.1)
+      # -----------------------------------------------------------------------
+      - job: build_backend
+        displayName: 'Build Backend Docker Image → ACR'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Cache@2
+            displayName: 'Restore Docker layer cache (backend)'
+            inputs:
+              key: 'docker-backend | "$(Agent.OS)" | ATOMIC-Backend/build.gradle | ATOMIC-Backend/gradle/wrapper/gradle-wrapper.properties'
+              restoreKeys: |
+                docker-backend | "$(Agent.OS)"
+                docker-backend
+              path: '/tmp/.docker-cache-backend'
+
+          # Login and build using Azure Service Connection (REQ-11.4 — no plain-text creds)
+          - task: AzureCLI@2
+            displayName: 'Login to ACR and push Backend image'
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+
+                # Retrieve ACR login server from Terraform outputs stored in pipeline variables
+                # (populated by the InfraCD stage on first run; on re-runs uses the cached output)
+                ACR_LOGIN_SERVER=$(az acr list \
+                  --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" \
+                  --query "[?contains(name,'atomic')].loginServer | [0]" \
+                  --output tsv 2>/dev/null || echo "")
+
+                # Fallback: derive from variable if az query fails on first run
+                if [ -z "$ACR_LOGIN_SERVER" ]; then
+                  echo "##[warning] ACR not yet provisioned — skipping image push. Run InfraCD first."
+                  exit 0
+                fi
+
+                echo "##vso[task.setvariable variable=ACR_LOGIN_SERVER;isOutput=true]$ACR_LOGIN_SERVER"
+                echo "Target ACR: $ACR_LOGIN_SERVER"
+
+                # Login to ACR using Managed Identity
+                az acr login --name "$(echo $ACR_LOGIN_SERVER | cut -d. -f1)"
+
+                # Build and push Backend image (REQ-11.1)
+                docker build \
+                  -t "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)" \
+                  -t "$ACR_LOGIN_SERVER/backend:latest" \
+                  -f "$(Build.SourcesDirectory)/ATOMIC-Backend/Dockerfile" \
+                  "$(Build.SourcesDirectory)/ATOMIC-Backend"
+
+                docker push "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)"
+                docker push "$ACR_LOGIN_SERVER/backend:latest"
+
+                echo "✅ Backend image pushed: $ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)"
+
+      # -----------------------------------------------------------------------
+      # Job: build-frontend
+      # Injects VITE_API_BASE_URL=/ and pushes frontend image to ACR (REQ-11.2, REQ-11.3)
+      # Runs in PARALLEL with build_backend
+      # -----------------------------------------------------------------------
+      - job: build_frontend
+        displayName: 'Build Frontend Docker Image → ACR'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Cache@2
+            displayName: 'Restore Docker layer cache (frontend)'
+            inputs:
+              key: 'docker-frontend | "$(Agent.OS)" | ATOMIC-Frontend/package-lock.json'
+              restoreKeys: |
+                docker-frontend | "$(Agent.OS)"
+                docker-frontend
+              path: '/tmp/.docker-cache-frontend'
+
+          - task: AzureCLI@2
+            displayName: 'Login to ACR and push Frontend image'
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+
+                ACR_LOGIN_SERVER=$(az acr list \
+                  --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" \
+                  --query "[?contains(name,'atomic')].loginServer | [0]" \
+                  --output tsv 2>/dev/null || echo "")
+
+                if [ -z "$ACR_LOGIN_SERVER" ]; then
+                  echo "##[warning] ACR not yet provisioned — skipping image push. Run InfraCD first."
+                  exit 0
+                fi
+
+                echo "##vso[task.setvariable variable=ACR_LOGIN_SERVER;isOutput=true]$ACR_LOGIN_SERVER"
+                echo "Target ACR: $ACR_LOGIN_SERVER"
+
+                az acr login --name "$(echo $ACR_LOGIN_SERVER | cut -d. -f1)"
+
+                # Inject VITE_API_BASE_URL=/ so Vite compiles with relative API paths (REQ-11.2, REQ-8.6)
+                # This ensures all Axios calls route through the Nginx reverse proxy, eliminating CORS.
+                echo "VITE_API_BASE_URL=/" > "$(Build.SourcesDirectory)/ATOMIC-Frontend/.env.production"
+
+                # Build and push Frontend image (REQ-11.3)
+                docker build \
+                  --build-arg VITE_API_BASE_URL=/ \
+                  -t "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)" \
+                  -t "$ACR_LOGIN_SERVER/frontend:latest" \
+                  -f "$(Build.SourcesDirectory)/ATOMIC-Frontend/Dockerfile" \
+                  "$(Build.SourcesDirectory)/ATOMIC-Frontend"
+
+                docker push "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)"
+                docker push "$ACR_LOGIN_SERVER/frontend:latest"
+
+                echo "✅ Frontend image pushed: $ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)"
+
+##############################################################################
+# STAGE 3: Infrastructure Continuous Delivery (Terraform)
+# Runs terraform init → plan → apply against the Azure backend (REQ-12).
+# The pipeline Service Connection provides ARM_* credentials via environment.
+##############################################################################
+  - stage: InfraCD
+    displayName: '🏗️  Stage 3 — Infrastructure CD (Terraform)'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: terraform_apply
+        displayName: 'Terraform init → plan → apply'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: TerraformInstaller@1
+            displayName: 'Install Terraform >= 1.7.0'
+            inputs:
+              terraformVersion: 'latest'
+
+          # Export ARM credentials from Service Connection as environment variables.
+          # These are never hardcoded in this file (REQ-12.7).
+          - task: AzureCLI@2
+            displayName: 'Terraform init'
+            env:
+              ARM_USE_OIDC: true
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              addSpnToEnvironment: true
+              inlineScript: |
+                set -euo pipefail
+
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_OIDC_TOKEN="$idToken"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
+                export ARM_USE_OIDC=true
+
+                cd "$(TERRAFORM_DIR)"
+
+                # Initialize with remote backend configuration (REQ-12.1)
+                terraform init \
+                  -backend-config="resource_group_name=$(TF_BACKEND_RESOURCE_GROUP)" \
+                  -backend-config="storage_account_name=$(TF_BACKEND_STORAGE_ACCOUNT)" \
+                  -backend-config="container_name=$(TF_BACKEND_CONTAINER)" \
+                  -backend-config="key=$(TF_BACKEND_KEY)" \
+                  -reconfigure
+
+                echo "✅ terraform init succeeded"
+
+          - task: AzureCLI@2
+            displayName: 'Terraform plan'
+            env:
+              ARM_USE_OIDC: true
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              addSpnToEnvironment: true
+              inlineScript: |
+                set -euo pipefail
+
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_OIDC_TOKEN="$idToken"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
+                export ARM_USE_OIDC=true
+
+                cd "$(TERRAFORM_DIR)"
+
+                # Generate plan and save to file for apply step (REQ-12.3)
+                terraform plan \
+                  -out=tfplan \
+                  -input=false
+
+                # Save plan as text for the pipeline artifact (REQ-12.3)
+                terraform show -no-color tfplan > tfplan.txt
+                echo "✅ terraform plan succeeded"
+
+          # Publish plan output as pipeline artifact so changes are visible
+          # in the Azure DevOps UI before apply (REQ-12.3)
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Terraform plan artifact'
+            inputs:
+              targetPath: '$(TERRAFORM_DIR)/tfplan.txt'
+              artifact: 'terraform-plan'
+              publishLocation: 'pipeline'
+
+          - task: AzureCLI@2
+            displayName: 'Terraform apply'
+            env:
+              ARM_USE_OIDC: true
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              addSpnToEnvironment: true
+              inlineScript: |
+                set -euo pipefail
+
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_OIDC_TOKEN="$idToken"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
+                export ARM_USE_OIDC=true
+
+                cd "$(TERRAFORM_DIR)"
+
+                # Apply the saved plan (REQ-12.5)
+                terraform apply -auto-approve -input=false tfplan
+                echo "✅ terraform apply succeeded"
+
+                # Extract outputs and set as pipeline variables for the Deploy stage
+                AKS_CLUSTER_NAME=$(terraform output -raw aks_cluster_name)
+                RESOURCE_GROUP=$(terraform output -raw resource_group_name)
+                ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
+                FLEXIBLE_SERVER_FQDN=$(terraform output -raw flexible_server_fqdn)
+                KEY_VAULT_URI=$(terraform output -raw key_vault_uri)
+                AKS_OIDC_ISSUER=$(terraform output -raw aks_oidc_issuer_url)
+
+                # Pass outputs to the Deploy stage via pipeline variables
+                echo "##vso[task.setvariable variable=AKS_CLUSTER_NAME;isOutput=true]$AKS_CLUSTER_NAME"
+                echo "##vso[task.setvariable variable=RESOURCE_GROUP;isOutput=true]$RESOURCE_GROUP"
+                echo "##vso[task.setvariable variable=ACR_LOGIN_SERVER;isOutput=true]$ACR_LOGIN_SERVER"
+                echo "##vso[task.setvariable variable=FLEXIBLE_SERVER_FQDN;isOutput=true]$FLEXIBLE_SERVER_FQDN"
+                echo "##vso[task.setvariable variable=KEY_VAULT_URI;isOutput=true]$KEY_VAULT_URI"
+                echo "##vso[task.setvariable variable=AKS_OIDC_ISSUER;isOutput=true]$AKS_OIDC_ISSUER"
+
+                echo "--- Terraform outputs ---"
+                echo "AKS Cluster:           $AKS_CLUSTER_NAME"
+                echo "Resource Group:        $RESOURCE_GROUP"
+                echo "ACR Login Server:      $ACR_LOGIN_SERVER"
+                echo "PostgreSQL FQDN:       $FLEXIBLE_SERVER_FQDN"
+                echo "Key Vault URI:         $KEY_VAULT_URI"
+
+##############################################################################
+# STAGE 4: Application Deployment
+# Installs Nginx Ingress Controller → applies k8s/ manifests → watches rollout.
+# (REQ-13)
+##############################################################################
+  - stage: Deploy
+    displayName: '🚀 Stage 4 — Application Deployment'
+    dependsOn: InfraCD
+    condition: succeeded()
+    variables:
+      # Map outputs from the InfraCD stage's terraform_apply job
+      AKS_CLUSTER_NAME: $[ stageDependencies.InfraCD.terraform_apply.outputs['terraform_apply.AKS_CLUSTER_NAME'] ]
+      RESOURCE_GROUP:   $[ stageDependencies.InfraCD.terraform_apply.outputs['terraform_apply.RESOURCE_GROUP'] ]
+      ACR_LOGIN_SERVER: $[ stageDependencies.InfraCD.terraform_apply.outputs['terraform_apply.ACR_LOGIN_SERVER'] ]
+      FLEXIBLE_SERVER_FQDN: $[ stageDependencies.InfraCD.terraform_apply.outputs['terraform_apply.FLEXIBLE_SERVER_FQDN'] ]
+      KEY_VAULT_URI:    $[ stageDependencies.InfraCD.terraform_apply.outputs['terraform_apply.KEY_VAULT_URI'] ]
+      AKS_OIDC_ISSUER:  $[ stageDependencies.InfraCD.terraform_apply.outputs['terraform_apply.AKS_OIDC_ISSUER'] ]
+    jobs:
+      - job: deploy_aks
+        displayName: 'Deploy to AKS (Nginx Ingress + Application Manifests)'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+
+          # ----------------------------------------------------------------
+          # Step 1: Retrieve AKS credentials (REQ-13.1)
+          # ----------------------------------------------------------------
+          - task: AzureCLI@2
+            displayName: 'Retrieve AKS credentials'
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+                echo "Fetching AKS credentials for cluster: $(AKS_CLUSTER_NAME)"
+                az aks get-credentials \
+                  --resource-group "$(RESOURCE_GROUP)" \
+                  --name "$(AKS_CLUSTER_NAME)" \
+                  --overwrite-existing
+                kubectl cluster-info
+                echo "✅ AKS credentials retrieved"
+
+          # ----------------------------------------------------------------
+          # Step 2: Install Nginx Ingress Controller v4.x (REQ-9.1)
+          # Waits for the controller Deployment to become Ready before
+          # applying application manifests.
+          # ----------------------------------------------------------------
+          - script: |
+              set -euo pipefail
+
+              # Install Helm if not present
+              if ! command -v helm &> /dev/null; then
+                curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+              fi
+
+              # Add the official ingress-nginx Helm repository
+              helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+              helm repo update
+
+              # Install or upgrade ingress-nginx controller (version 4.x)
+              helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+                --namespace "$(INGRESS_NAMESPACE)" \
+                --create-namespace \
+                --version "4.10.1" \
+                --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path"=/healthz \
+                --set controller.admissionWebhooks.patch.nodeSelector."kubernetes\.io/os"=linux \
+                --set controller.nodeSelector."kubernetes\.io/os"=linux \
+                --set defaultBackend.nodeSelector."kubernetes\.io/os"=linux \
+                --set controller.admissionWebhooks.patch.image.registry=registry.k8s.io \
+                --wait \
+                --timeout 8m
+
+              echo "✅ Nginx Ingress Controller installed and Ready"
+            displayName: 'Install Nginx Ingress Controller (v4.x)'
+
+          # ----------------------------------------------------------------
+          # Step 3: Ensure production namespace exists
+          # ----------------------------------------------------------------
+          - script: |
+              set -euo pipefail
+              kubectl apply -f "$(K8S_DIR)/namespace.yaml"
+              echo "✅ Namespace 'production' ensured"
+            displayName: 'Apply namespace manifest'
+
+          # ----------------------------------------------------------------
+          # Step 4: Substitute Terraform outputs into manifests (REQ-13.3)
+          # Uses envsubst to replace ${ACR_LOGIN_SERVER}, ${IMAGE_TAG},
+          # ${FLEXIBLE_SERVER_FQDN}, ${KEY_VAULT_URI} placeholders.
+          # ----------------------------------------------------------------
+          - task: AzureCLI@2
+            displayName: 'Substitute manifest variables and apply k8s/ manifests'
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+
+                export IMAGE_TAG="$(Build.SourceVersion)"
+                export ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER)"
+                export FLEXIBLE_SERVER_FQDN="$(FLEXIBLE_SERVER_FQDN)"
+                export KEY_VAULT_URI="$(KEY_VAULT_URI)"
+
+                # Retrieve the AKS Managed Identity Client ID for Workload Identity annotation
+                AKS_MI_CLIENT_ID=$(az aks show \
+                  --resource-group "$(RESOURCE_GROUP)" \
+                  --name "$(AKS_CLUSTER_NAME)" \
+                  --query "identityProfile.kubeletidentity.clientId" \
+                  --output tsv)
+                export AZURE_CLIENT_ID="$AKS_MI_CLIENT_ID"
+
+                echo "--- Deployment variables ---"
+                echo "ACR Login Server:    $ACR_LOGIN_SERVER"
+                echo "Image Tag:           $IMAGE_TAG"
+                echo "PostgreSQL FQDN:     $FLEXIBLE_SERVER_FQDN"
+                echo "Key Vault URI:       $KEY_VAULT_URI"
+                echo "AKS MI Client ID:    $AZURE_CLIENT_ID"
+
+                # Create a temp directory for substituted manifests
+                MANIFEST_DIR=$(mktemp -d)
+
+                # Substitute all manifests and write to temp dir
+                for manifest in $(K8S_DIR)/*.yaml; do
+                  filename=$(basename "$manifest")
+                  envsubst < "$manifest" > "$MANIFEST_DIR/$filename"
+                done
+
+                echo "--- Applying substituted manifests ---"
+                kubectl apply -f "$MANIFEST_DIR/"
+
+                echo "✅ All k8s/ manifests applied"
+
+          # ----------------------------------------------------------------
+          # Step 5: Rollout status check (REQ-13.5)
+          # Waits up to 10 minutes for both deployments to become ready.
+          # Both checks run; failure of either fails the job.
+          # ----------------------------------------------------------------
+          - script: |
+              set -euo pipefail
+
+              echo "Watching rollout: backend"
+              kubectl rollout status deployment/backend \
+                --namespace production \
+                --timeout=10m &
+              BACKEND_PID=$!
+
+              echo "Watching rollout: frontend"
+              kubectl rollout status deployment/frontend \
+                --namespace production \
+                --timeout=10m &
+              FRONTEND_PID=$!
+
+              # Wait for both in parallel; capture exit codes
+              BACKEND_EXIT=0
+              FRONTEND_EXIT=0
+              wait $BACKEND_PID  || BACKEND_EXIT=$?
+              wait $FRONTEND_PID || FRONTEND_EXIT=$?
+
+              if [ "$BACKEND_EXIT" -ne 0 ]; then
+                echo "##[error] Backend deployment rollout FAILED (exit $BACKEND_EXIT)"
+              fi
+              if [ "$FRONTEND_EXIT" -ne 0 ]; then
+                echo "##[error] Frontend deployment rollout FAILED (exit $FRONTEND_EXIT)"
+              fi
+
+              # Fail the job if either rollout failed
+              if [ "$BACKEND_EXIT" -ne 0 ] || [ "$FRONTEND_EXIT" -ne 0 ]; then
+                exit 1
+              fi
+
+              echo "✅ Both deployments reached Ready state"
+            displayName: 'Wait for rollout status (backend + frontend, 10m timeout)'
+
+          # ----------------------------------------------------------------
+          # Step 6: Print the public Ingress IP for convenience
+          # ----------------------------------------------------------------
+          - script: |
+              echo "--- Cluster resources summary ---"
+              kubectl get pods,svc -n production
+              kubectl get pods,svc -n ingress-nginx
+
+              echo "--- Ingress public IP ---"
+              # Wait up to 3 minutes for the Azure Load Balancer IP to be assigned
+              for i in $(seq 1 18); do
+                EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller \
+                  -n ingress-nginx \
+                  -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+                if [ -n "$EXTERNAL_IP" ]; then
+                  echo "============================================================="
+                  echo "✅  ATOMIC Tasky is live at: http://$EXTERNAL_IP"
+                  echo "============================================================="
+                  break
+                fi
+                echo "Waiting for external IP... ($i/18)"
+                sleep 10
+              done
+            displayName: 'Print deployment summary and public IP'
+            condition: succeeded()

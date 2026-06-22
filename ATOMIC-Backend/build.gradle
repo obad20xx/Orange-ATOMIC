@@ -19,8 +19,10 @@ repositories {
 }
 
 ext {
-	// Adjusted Spring Cloud BOM version to cleanly support Spring Boot 3.3.x
+	// Spring Cloud OSS BOM — supports Spring Boot 3.3.x
 	set('springCloudVersion', "2023.0.2")
+	// Azure Spring Cloud BOM — v5.x is compatible with Spring Boot 3.3.x
+	set('azureSpringVersion', "5.13.0")
 }
 
 dependencies {
@@ -30,9 +32,12 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'org.springframework.boot:spring-boot-starter-validation' // Maps Jakarta Validation constraints
 	
-	// Microservice Resilience & Vault Management
+	// Microservice Resilience
 	implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
-	implementation 'org.springframework.cloud:spring-cloud-starter-vault-config'
+
+	// Azure Key Vault Secret integration (replaces HashiCorp Vault — REQ-6, REQ-14.4)
+	// Fetches secrets from Azure Key Vault at startup using Workload Identity (no stored credentials)
+	implementation 'com.azure.spring:spring-cloud-azure-starter-keyvault-secrets'
 	
 	// Swagger/OpenAPI 3 Integration
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0'
@@ -62,8 +67,10 @@ dependencies {
 
 dependencyManagement {
 	imports {
-		// Explicitly structures dependencies matching the chosen Spring Cloud Ecosystem
+		// Spring Cloud OSS BOM — resolves resilience4j and other SC dependencies
 		mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+		// Azure Spring Cloud BOM — resolves Azure SDK + Key Vault starter versions
+		mavenBom "com.azure.spring:spring-cloud-azure-dependencies:${azureSpringVersion}"
 	}
 }
 

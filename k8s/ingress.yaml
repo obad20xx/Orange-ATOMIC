@@ -1,0 +1,44 @@
+##############################################################################
+# ingress.yaml
+# Nginx Ingress resource routing all HTTP traffic on port 80 to the
+# Frontend ClusterIP Service (REQ-9).
+#
+# Design decisions:
+#   - ingressClassName: nginx — claims the resource for the ingress-nginx controller
+#   - Single rule: Prefix "/" routes all traffic to frontend-service:80
+#   - No TLS block — TLS termination deferred to a future iteration (REQ-9.4)
+#   - No HTTPS redirect annotation — plain HTTP only for now (REQ-9.4)
+#   - The Nginx Ingress Controller is installed separately by the pipeline
+#     in the ingress-nginx namespace using the official Helm chart (REQ-9.1)
+##############################################################################
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: atomic-tasky-ingress
+  namespace: production
+  labels:
+    app: atomic-tasky
+    managed-by: azure-pipelines
+  annotations:
+    # Nginx Ingress proxy timeouts — generous for Spring Boot startup
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    # Buffer size for proxied responses
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+spec:
+  # Claims this Ingress resource for the ingress-nginx controller (REQ-9.3)
+  ingressClassName: nginx
+
+  rules:
+    - http:
+        paths:
+          # Route all traffic to frontend-service; the Frontend Nginx container
+          # then internally reverse-proxies API calls to backend-service:8080 (REQ-9.2)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80

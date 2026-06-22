@@ -1,0 +1,99 @@
+##############################################################################
+# backend-deployment.yaml
+# Deploys the Spring Boot 3.3 Backend application to AKS.
+#
+# Key design decisions:
+#   - NO init containers (REQ-6.7 — HashiCorp Vault dependency fully eliminated)
+#   - Workload Identity annotation enables pod-level Key Vault access (REQ-7.5)
+#   - Security context hardened: non-root, no privilege escalation, drop ALL caps
+#   - Resource requests/limits match REQ-7.2
+#   - Liveness/readiness probes match REQ-7.3
+#   - Image tag substituted by pipeline from ACR login server + commit SHA
+#
+# NOTE: ACR_LOGIN_SERVER and IMAGE_TAG placeholders are substituted by
+# the pipeline using envsubst before kubectl apply.
+##############################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: production
+  labels:
+    app: backend
+    managed-by: azure-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+      annotations:
+        # Required annotation for Azure Workload Identity (REQ-7.5)
+        # Signals the Workload Identity mutating webhook to inject the
+        # AZURE_FEDERATED_TOKEN_FILE environment variable into the container.
+        azure.workload.identity/use: "true"
+    spec:
+      # ServiceAccount bound to the AKS Managed Identity via federated credential
+      serviceAccountName: backend-workload-identity-sa
+
+      # Pod-level security context (REQ-7.1)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: backend
+          # Image tag substituted by pipeline: ${ACR_LOGIN_SERVER}/backend:${IMAGE_TAG}
+          image: "${ACR_LOGIN_SERVER}/backend:${IMAGE_TAG}"
+          imagePullPolicy: Always
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # Container-level security hardening (REQ-7.1)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            # readOnlyRootFilesystem intentionally omitted — the JVM writes to /tmp.
+            # Mount an emptyDir at /tmp if enforcement is required in future.
+
+          # Environment variables from ConfigMap (non-secret values)
+          envFrom:
+            - configMapRef:
+                name: backend-configmap
+
+          # Resource requests and limits (REQ-7.2)
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+
+          # Liveness probe — restart pod if Spring Boot hangs (REQ-7.3)
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 65
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # Readiness probe — remove pod from Service endpoints until ready (REQ-7.3)
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+            successThreshold: 1

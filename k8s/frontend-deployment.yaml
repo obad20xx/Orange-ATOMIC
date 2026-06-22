@@ -1,0 +1,107 @@
+##############################################################################
+# frontend-deployment.yaml
+# Deploys the Vue 3 / Nginx Frontend application to AKS.
+#
+# Key design decisions:
+#   - Nginx config injected via ConfigMap volume (not baked into the image)
+#   - emptyDir volumes for /var/cache/nginx and /var/run (Nginx writeable paths)
+#   - Security context: non-root user 101 (nginx), readOnlyRootFilesystem: true
+#   - Resource requests/limits match REQ-8.1
+#
+# NOTE: ACR_LOGIN_SERVER and IMAGE_TAG placeholders are substituted by
+# the pipeline using envsubst before kubectl apply.
+##############################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: production
+  labels:
+    app: frontend
+    managed-by: azure-pipelines
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      # Pod-level security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101         # nginx non-root user (matches nginx:alpine defaults)
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: frontend
+          # Image tag substituted by pipeline: ${ACR_LOGIN_SERVER}/frontend:${IMAGE_TAG}
+          image: "${ACR_LOGIN_SERVER}/frontend:${IMAGE_TAG}"
+          imagePullPolicy: Always
+
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+
+          # Container-level security hardening (REQ-8.1)
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+
+          # Liveness probe — nginx returns 200 on / when healthy
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # Readiness probe
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+
+          # Resource requests and limits (REQ-8.1)
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+          # Volume mounts (REQ-8.1)
+          volumeMounts:
+            # Nginx configuration from ConfigMap
+            - name: nginx-config
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+            # Writable cache directory required by Nginx (readOnlyRootFilesystem: true)
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            # Writable run directory required by Nginx for PID file
+            - name: nginx-run
+              mountPath: /var/run
+
+      volumes:
+        # Nginx configuration supplied via frontend-configmap.yaml
+        - name: nginx-config
+          configMap:
+            name: frontend-nginx-config
+        # Ephemeral writable volumes for Nginx runtime files
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}

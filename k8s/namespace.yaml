@@ -1,0 +1,11 @@
+##############################################################################
+# namespace.yaml
+# Creates the production namespace for all ATOMIC Tasky workloads.
+##############################################################################
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    name: production
+    managed-by: azure-pipelines

@@ -10,7 +10,6 @@
 *.sln
 *.sw?
 
-
 # IDE Specific
 .idea/
 *.iml
@@ -18,10 +17,33 @@
 .project
 .settings/
 
-# Ignore Helm chart vendor dependencies
-**/helm/tasky-app/charts/*.tgz
-**/helm/tasky-app/charts/postgresql/
-**/helm/tasky-app/charts/vault/
+# ============================================================
+# Terraform
+# ============================================================
+# Local .terraform directory (contains provider binaries)
+**/.terraform/*
+.terraform/
 
-# Ignore local GitLab CI/CD configuration files
-.gitlab-ci-local
+# Terraform state files — state is stored remotely in Azure Blob Storage
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Terraform variable values file — contains environment-specific secrets.
+# Supply values via Azure Pipelines variable groups or -var flags.
+terraform/terraform.tfvars
+
+# Terraform plan output (binary)
+terraform/tfplan
+
+# Terraform crash log
+crash.log
+crash.*.log
+
+# Terraform lock file is committed (ensures provider version consistency)
+# .terraform.lock.hcl  <- intentionally NOT ignored
+
+# ============================================================
+# Ignore local GitLab CI/CD configuration files (legacy)
+# ============================================================
+.gitlab-ci-local
