@@ -149,9 +149,10 @@ stages:
           vmImage: 'ubuntu-latest'
         steps:
           - script: |
+              set -euo pipefail
               mkdir -p $(Agent.TempDirectory)/bin
-              wget -q --timeout=15 --tries=3 https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
-              unzip -o -q terraform_1.8.5_linux_amd64.zip -d $(Agent.TempDirectory)/bin
+              curl -L -s -S -o terraform.zip https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
+              unzip -o -q terraform.zip -d $(Agent.TempDirectory)/bin
               echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
             displayName: 'Install Terraform'
 
@@ -161,9 +162,10 @@ stages:
             displayName: 'Verify Terraform code formatting'
 
           - script: |
+              set -euo pipefail
               mkdir -p $(Agent.TempDirectory)/bin
-              wget -q --timeout=15 --tries=3 https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
-              tar -xzf trivy_0.51.1_Linux-64bit.tar.gz -C $(Agent.TempDirectory)/bin trivy
+              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
+              tar -xzf trivy.tar.gz -C $(Agent.TempDirectory)/bin trivy
               echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
               $(Agent.TempDirectory)/bin/trivy --version
             displayName: 'Install Trivy Scanner'
@@ -223,9 +225,10 @@ stages:
                   "$(Build.SourcesDirectory)/ATOMIC-Backend"
 
           - script: |
+              set -euo pipefail
               mkdir -p $(Agent.TempDirectory)/bin
-              wget -q --timeout=15 --tries=3 https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
-              tar -xzf trivy_0.51.1_Linux-64bit.tar.gz -C $(Agent.TempDirectory)/bin trivy
+              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
+              tar -xzf trivy.tar.gz -C $(Agent.TempDirectory)/bin trivy
               
               # Retrieve variables set in previous steps
               ACR_LOGIN_SERVER=$(az acr list --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" --query "[?contains(name,'atomic')].loginServer | [0]" --output tsv 2>/dev/null || echo "placeholder.azurecr.io")
@@ -294,9 +297,10 @@ stages:
                   "$(Build.SourcesDirectory)/ATOMIC-Frontend"
 
           - script: |
+              set -euo pipefail
               mkdir -p $(Agent.TempDirectory)/bin
-              wget -q --timeout=15 --tries=3 https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
-              tar -xzf trivy_0.51.1_Linux-64bit.tar.gz -C $(Agent.TempDirectory)/bin trivy
+              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
+              tar -xzf trivy.tar.gz -C $(Agent.TempDirectory)/bin trivy
               ACR_LOGIN_SERVER=$(az acr list --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" --query "[?contains(name,'atomic')].loginServer | [0]" --output tsv 2>/dev/null || echo "placeholder.azurecr.io")
               
               echo "Scanning built Frontend image..."
@@ -373,9 +377,10 @@ stages:
               downloadPath: '$(System.ArtifactsDirectory)'
 
           - script: |
+              set -euo pipefail
               mkdir -p $(Agent.TempDirectory)/bin
-              wget -q --timeout=15 --tries=3 https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
-              unzip -o -q terraform_1.8.5_linux_amd64.zip -d $(Agent.TempDirectory)/bin
+              curl -L -s -S -o terraform.zip https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
+              unzip -o -q terraform.zip -d $(Agent.TempDirectory)/bin
               echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
             displayName: 'Install Terraform'
 
