@@ -24,7 +24,7 @@ locals {
 # The Terraform state backend Storage Account is NOT in this resource group.
 ##############################################################################
 resource "azurerm_resource_group" "main" {
-  name     = "rg-${local.name_prefix}"
+  name     = "ERAMOVA"
   location = var.location
   tags     = local.common_tags
 }
