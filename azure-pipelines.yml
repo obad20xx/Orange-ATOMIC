@@ -115,10 +115,10 @@ stages:
                 npm
               path: '$(Build.SourcesDirectory)/ATOMIC-Frontend/node_modules'
 
-          - task: NodeTool@0
+          - task: UseNode@1
             displayName: 'Install Node.js 20'
             inputs:
-              versionSpec: '20.x'
+              version: '20.x'
 
           - script: |
               npm ci
@@ -148,6 +148,13 @@ stages:
         pool:
           vmImage: 'ubuntu-latest'
         steps:
+          - script: |
+              wget -q https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
+              unzip -q terraform_1.8.5_linux_amd64.zip
+              sudo mv terraform /usr/local/bin/
+              terraform --version
+            displayName: 'Install Terraform'
+
           - script: |
               cd "$(TERRAFORM_DIR)"
               terraform fmt -check
@@ -359,6 +366,13 @@ stages:
               downloadType: 'single'
               artifactName: 'deployment-assets'
               downloadPath: '$(System.ArtifactsDirectory)'
+
+          - script: |
+              wget -q https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
+              unzip -q terraform_1.8.5_linux_amd64.zip
+              sudo mv terraform /usr/local/bin/
+              terraform --version
+            displayName: 'Install Terraform'
 
           - task: AzureCLI@2
             displayName: 'Terraform Init & Plan'
