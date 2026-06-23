@@ -193,7 +193,7 @@ stages:
           vmImage: 'ubuntu-latest'
         steps:
           - task: AzureCLI@2
-            displayName: 'Retrieve ACR and Build Backend Image'
+            displayName: 'Build Backend Docker Image'
             inputs:
               azureSubscription: '$(SERVICE_CONNECTION)'
               scriptType: 'bash'
@@ -217,7 +217,6 @@ stages:
                   -t "$ACR_LOGIN_SERVER/backend:latest" \
                   -f "$(Build.SourcesDirectory)/ATOMIC-Backend/Dockerfile" \
                   "$(Build.SourcesDirectory)/ATOMIC-Backend"
-            displayName: 'Build Backend Docker Image'
 
           - script: |
               # Install Trivy
@@ -263,7 +262,7 @@ stages:
           vmImage: 'ubuntu-latest'
         steps:
           - task: AzureCLI@2
-            displayName: 'Retrieve ACR and Build Frontend Image'
+            displayName: 'Build Frontend Docker Image'
             inputs:
               azureSubscription: '$(SERVICE_CONNECTION)'
               scriptType: 'bash'
@@ -288,7 +287,6 @@ stages:
                   -t "$ACR_LOGIN_SERVER/frontend:latest" \
                   -f "$(Build.SourcesDirectory)/ATOMIC-Frontend/Dockerfile" \
                   "$(Build.SourcesDirectory)/ATOMIC-Frontend"
-            displayName: 'Build Frontend Docker Image'
 
           - script: |
               curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.51.1
@@ -407,7 +405,6 @@ stages:
 
                 terraform show -no-color tfplan > tfplan.txt
                 echo "✅ Terraform Plan succeeded"
-            displayName: 'Terraform Initialization and Planning'
 
           - task: PublishPipelineArtifact@1
             displayName: 'Publish Terraform Plan Text'
@@ -504,7 +501,6 @@ stages:
                         --name "$(AKS_CLUSTER_NAME)" \
                         --overwrite-existing
                       kubectl cluster-info
-                  displayName: 'Retrieve Cluster Credentials'
 
                 - script: |
                     set -euo pipefail
