@@ -49,6 +49,45 @@ variables:
     value: 'ingress-nginx'
   - name: APP_NAMESPACE
     value: 'production'
+  # Terraform Variables (automatically mapped to environment variables in tasks)
+  - name: TF_VAR_location
+    value: 'francecentral'
+  - name: TF_VAR_environment
+    value: 'production'
+  - name: TF_VAR_project
+    value: 'atomic-tasky'
+  - name: TF_VAR_vnet_address_space
+    value: '10.0.0.0/16'
+  - name: TF_VAR_public_subnet_cidr
+    value: '10.0.1.0/24'
+  - name: TF_VAR_aks_subnet_cidr
+    value: '10.0.2.0/24'
+  - name: TF_VAR_db_subnet_cidr
+    value: '10.0.3.0/28'
+  - name: TF_VAR_acr_sku
+    value: 'Basic'
+  - name: TF_VAR_aks_kubernetes_version
+    value: '1.33'
+  - name: TF_VAR_aks_node_vm_size
+    value: 'Standard_Fx2mds_v2'
+  - name: TF_VAR_aks_node_count
+    value: '1'
+  - name: TF_VAR_postgres_sku_name
+    value: 'B_Standard_B1ms'
+  - name: TF_VAR_postgres_version
+    value: '16'
+  - name: TF_VAR_postgres_storage_mb
+    value: '32768'
+  - name: TF_VAR_postgres_admin_login
+    value: 'atomicadmin'
+  - name: TF_VAR_postgres_db_name
+    value: 'atomicdb'
+  - name: TF_VAR_enable_public_access
+    value: 'false'
+  - name: TF_VAR_keyvault_soft_delete_retention_days
+    value: '90'
+  - name: TF_VAR_pipeline_agent_ip_range
+    value: '0.0.0.0/0'
 
 stages:
   # =========================================================================
@@ -204,20 +243,29 @@ stages:
               echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
             displayName: 'Install Terraform'
 
-          - task: DownloadSecureFile@1
-            name: tfvars
-            displayName: 'Download terraform.tfvars'
-            inputs:
-              secureFile: 'terraform.tfvars'
-
-          - script: |
-              cp $(tfvars.secureFilePath) "$(Build.SourcesDirectory)/terraform/terraform.tfvars"
-            displayName: 'Copy terraform.tfvars to Terraform Directory'
-
           - task: AzureCLI@2
             displayName: 'Terraform Apply (ACR Only)'
             env:
               ARM_USE_OIDC: true
+              TF_VAR_location: $(TF_VAR_location)
+              TF_VAR_environment: $(TF_VAR_environment)
+              TF_VAR_project: $(TF_VAR_project)
+              TF_VAR_vnet_address_space: $(TF_VAR_vnet_address_space)
+              TF_VAR_public_subnet_cidr: $(TF_VAR_public_subnet_cidr)
+              TF_VAR_aks_subnet_cidr: $(TF_VAR_aks_subnet_cidr)
+              TF_VAR_db_subnet_cidr: $(TF_VAR_db_subnet_cidr)
+              TF_VAR_acr_sku: $(TF_VAR_acr_sku)
+              TF_VAR_aks_kubernetes_version: $(TF_VAR_aks_kubernetes_version)
+              TF_VAR_aks_node_vm_size: $(TF_VAR_aks_node_vm_size)
+              TF_VAR_aks_node_count: $(TF_VAR_aks_node_count)
+              TF_VAR_postgres_sku_name: $(TF_VAR_postgres_sku_name)
+              TF_VAR_postgres_version: $(TF_VAR_postgres_version)
+              TF_VAR_postgres_storage_mb: $(TF_VAR_postgres_storage_mb)
+              TF_VAR_postgres_admin_login: $(TF_VAR_postgres_admin_login)
+              TF_VAR_postgres_db_name: $(TF_VAR_postgres_db_name)
+              TF_VAR_enable_public_access: $(TF_VAR_enable_public_access)
+              TF_VAR_keyvault_soft_delete_retention_days: $(TF_VAR_keyvault_soft_delete_retention_days)
+              TF_VAR_pipeline_agent_ip_range: $(TF_VAR_pipeline_agent_ip_range)
             inputs:
               azureSubscription: '$(SERVICE_CONNECTION)'
               scriptType: 'bash'
@@ -477,20 +525,29 @@ stages:
               echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
             displayName: 'Install Terraform'
 
-          - task: DownloadSecureFile@1
-            name: tfvars
-            displayName: 'Download terraform.tfvars'
-            inputs:
-              secureFile: 'terraform.tfvars'
-
-          - script: |
-              cp $(tfvars.secureFilePath) "$(Build.SourcesDirectory)/terraform/terraform.tfvars"
-            displayName: 'Copy terraform.tfvars to Terraform Directory'
-
           - task: AzureCLI@2
             displayName: 'Terraform Apply (Full)'
             env:
               ARM_USE_OIDC: true
+              TF_VAR_location: $(TF_VAR_location)
+              TF_VAR_environment: $(TF_VAR_environment)
+              TF_VAR_project: $(TF_VAR_project)
+              TF_VAR_vnet_address_space: $(TF_VAR_vnet_address_space)
+              TF_VAR_public_subnet_cidr: $(TF_VAR_public_subnet_cidr)
+              TF_VAR_aks_subnet_cidr: $(TF_VAR_aks_subnet_cidr)
+              TF_VAR_db_subnet_cidr: $(TF_VAR_db_subnet_cidr)
+              TF_VAR_acr_sku: $(TF_VAR_acr_sku)
+              TF_VAR_aks_kubernetes_version: $(TF_VAR_aks_kubernetes_version)
+              TF_VAR_aks_node_vm_size: $(TF_VAR_aks_node_vm_size)
+              TF_VAR_aks_node_count: $(TF_VAR_aks_node_count)
+              TF_VAR_postgres_sku_name: $(TF_VAR_postgres_sku_name)
+              TF_VAR_postgres_version: $(TF_VAR_postgres_version)
+              TF_VAR_postgres_storage_mb: $(TF_VAR_postgres_storage_mb)
+              TF_VAR_postgres_admin_login: $(TF_VAR_postgres_admin_login)
+              TF_VAR_postgres_db_name: $(TF_VAR_postgres_db_name)
+              TF_VAR_enable_public_access: $(TF_VAR_enable_public_access)
+              TF_VAR_keyvault_soft_delete_retention_days: $(TF_VAR_keyvault_soft_delete_retention_days)
+              TF_VAR_pipeline_agent_ip_range: $(TF_VAR_pipeline_agent_ip_range)
             inputs:
               azureSubscription: '$(SERVICE_CONNECTION)'
               scriptType: 'bash'
