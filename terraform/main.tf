@@ -29,6 +29,11 @@ resource "azurerm_resource_group" "main" {
   tags     = local.common_tags
 }
 
+import {
+  to = azurerm_resource_group.main
+  id = "/subscriptions/283fd97c-a3da-4e72-9b52-586347ed963a/resourceGroups/ERAMOVA"
+}
+
 ##############################################################################
 # Random suffix for globally unique resource names (ACR, Key Vault)
 # Azure Container Registry names must be globally unique and alphanumeric only.
