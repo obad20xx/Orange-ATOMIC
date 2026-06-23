@@ -204,6 +204,16 @@ stages:
               echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
             displayName: 'Install Terraform'
 
+          - task: DownloadSecureFile@1
+            name: tfvars
+            displayName: 'Download terraform.tfvars'
+            inputs:
+              secureFile: 'terraform.tfvars'
+
+          - script: |
+              cp $(tfvars.secureFilePath) "$(Build.SourcesDirectory)/terraform/terraform.tfvars"
+            displayName: 'Copy terraform.tfvars to Terraform Directory'
+
           - task: AzureCLI@2
             displayName: 'Terraform Apply (ACR Only)'
             env:
@@ -466,6 +476,16 @@ stages:
               unzip -o -q terraform.zip -d $(Agent.TempDirectory)/bin
               echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
             displayName: 'Install Terraform'
+
+          - task: DownloadSecureFile@1
+            name: tfvars
+            displayName: 'Download terraform.tfvars'
+            inputs:
+              secureFile: 'terraform.tfvars'
+
+          - script: |
+              cp $(tfvars.secureFilePath) "$(Build.SourcesDirectory)/terraform/terraform.tfvars"
+            displayName: 'Copy terraform.tfvars to Terraform Directory'
 
           - task: AzureCLI@2
             displayName: 'Terraform Apply (Full)'
