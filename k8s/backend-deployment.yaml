@@ -62,8 +62,12 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            # readOnlyRootFilesystem intentionally omitted — the JVM writes to /tmp.
-            # Mount an emptyDir at /tmp if enforcement is required in future.
+            readOnlyRootFilesystem: true
+
+          # Mount writable emptyDir at /tmp since JVM/Tomcat writes temp files (REQ-7.1)
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
 
           # Environment variables from ConfigMap (non-secret values)
           envFrom:
@@ -97,3 +101,8 @@ spec:
             periodSeconds: 10
             failureThreshold: 3
             successThreshold: 1
+
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
+
