@@ -162,7 +162,8 @@ stages:
 
           - script: |
               mkdir -p $(Agent.TempDirectory)/bin
-              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $(Agent.TempDirectory)/bin v0.51.1
+              wget -q --timeout=15 --tries=3 https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
+              tar -xzf trivy_0.51.1_Linux-64bit.tar.gz -C $(Agent.TempDirectory)/bin trivy
               echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
               $(Agent.TempDirectory)/bin/trivy --version
             displayName: 'Install Trivy Scanner'
@@ -223,7 +224,8 @@ stages:
 
           - script: |
               mkdir -p $(Agent.TempDirectory)/bin
-              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $(Agent.TempDirectory)/bin v0.51.1
+              wget -q --timeout=15 --tries=3 https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
+              tar -xzf trivy_0.51.1_Linux-64bit.tar.gz -C $(Agent.TempDirectory)/bin trivy
               
               # Retrieve variables set in previous steps
               ACR_LOGIN_SERVER=$(az acr list --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" --query "[?contains(name,'atomic')].loginServer | [0]" --output tsv 2>/dev/null || echo "placeholder.azurecr.io")
@@ -293,7 +295,8 @@ stages:
 
           - script: |
               mkdir -p $(Agent.TempDirectory)/bin
-              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $(Agent.TempDirectory)/bin v0.51.1
+              wget -q --timeout=15 --tries=3 https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
+              tar -xzf trivy_0.51.1_Linux-64bit.tar.gz -C $(Agent.TempDirectory)/bin trivy
               ACR_LOGIN_SERVER=$(az acr list --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" --query "[?contains(name,'atomic')].loginServer | [0]" --output tsv 2>/dev/null || echo "placeholder.azurecr.io")
               
               echo "Scanning built Frontend image..."
