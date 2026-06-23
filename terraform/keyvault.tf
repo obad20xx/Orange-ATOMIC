@@ -30,17 +30,17 @@ resource "azurerm_key_vault" "main" {
   sku_name = "standard"
 
   # Soft-delete configuration: 90-day retention (REQ-6.1)
-  soft_delete_retention_days  = var.keyvault_soft_delete_retention_days
-  purge_protection_enabled    = true
+  soft_delete_retention_days = var.keyvault_soft_delete_retention_days
+  purge_protection_enabled   = true
 
   # Network ACLs: restrict public access to AKS subnet and pipeline agents.
   # The default action is Deny — only the explicit allow-list can reach Key Vault.
   network_acls {
-    bypass                     = "AzureServices"
-    default_action             = "Deny"
+    bypass         = "AzureServices"
+    default_action = "Deny"
 
     # Allow the pipeline agent IP range so Terraform can write secrets
-    ip_rules                   = [var.pipeline_agent_ip_range]
+    ip_rules = [var.pipeline_agent_ip_range]
 
     # Allow the AKS subnet so Backend pods can reach Key Vault at runtime
     virtual_network_subnet_ids = [azurerm_subnet.aks.id]
@@ -60,16 +60,3 @@ resource "azurerm_role_assignment" "terraform_keyvault_admin" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
-# ---------------------------------------------------------------------------
-# RBAC: AKS Managed Identity → Key Vault Secrets User (REQ-6.3)
-# Grants the AKS cluster identity read/list access to Key Vault secrets.
-# The Backend pod inherits this identity via Workload Identity to fetch
-# database credentials at runtime without any stored credentials.
-# ---------------------------------------------------------------------------
-resource "azurerm_role_assignment" "aks_keyvault_secrets_user" {
-  scope                = azurerm_key_vault.main.id
-  role_definition_name = "Key Vault Secrets User"
-  principal_id         = azurerm_kubernetes_cluster.main.identity[0].principal_id
-
-  depends_on = [azurerm_kubernetes_cluster.main]
-}

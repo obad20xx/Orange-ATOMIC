@@ -59,3 +59,12 @@ output "key_vault_name" {
   description = "The name of the Azure Key Vault resource."
   value       = azurerm_key_vault.main.name
 }
+
+# ---------------------------------------------------------------------------
+# Backend Workload Identity
+# ---------------------------------------------------------------------------
+output "backend_identity_client_id" {
+  description = "The client ID of the User-Assigned Managed Identity for the backend. Injected into the Kubernetes ServiceAccount."
+  value       = azurerm_user_assigned_identity.backend.client_id
+}
+

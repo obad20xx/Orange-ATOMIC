@@ -49,18 +49,18 @@ resource "azurerm_key_vault_secret" "postgres_password" {
 # VNet injection into DB Subnet via private DNS zone (REQ-5.2, REQ-2.3)
 # ---------------------------------------------------------------------------
 resource "azurerm_postgresql_flexible_server" "main" {
-  name                   = "psql-${local.name_prefix}"
-  resource_group_name    = azurerm_resource_group.main.name
-  location               = azurerm_resource_group.main.location
+  name                = "psql-${local.name_prefix}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
 
   # Compute tier and SKU (REQ-5.1)
-  sku_name               = var.postgres_sku_name
+  sku_name = var.postgres_sku_name
 
   # Engine version (REQ-5)
-  version                = var.postgres_version
+  version = var.postgres_version
 
   # Storage
-  storage_mb             = var.postgres_storage_mb
+  storage_mb = var.postgres_storage_mb
 
   # Administrator credentials
   administrator_login    = var.postgres_admin_login
@@ -68,8 +68,8 @@ resource "azurerm_postgresql_flexible_server" "main" {
 
   # VNet integration — inject the server into the DB subnet (REQ-5.2)
   # Requires the subnet delegation and private DNS zone to exist first.
-  delegated_subnet_id    = azurerm_subnet.db.id
-  private_dns_zone_id    = azurerm_private_dns_zone.postgres.id
+  delegated_subnet_id = azurerm_subnet.db.id
+  private_dns_zone_id = azurerm_private_dns_zone.postgres.id
 
   # Public access control (REQ-5.3):
   #   - enable_public_access = false (default) → private VNet only

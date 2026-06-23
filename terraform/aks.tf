@@ -26,12 +26,12 @@ resource "azurerm_kubernetes_cluster" "main" {
   # Fixed node count of 2 for basic availability (REQ-4.1).
   # ---------------------------------------------------------------------------
   default_node_pool {
-    name                = "systempool"
-    node_count          = var.aks_node_count
-    vm_size             = var.aks_node_vm_size
-    vnet_subnet_id      = azurerm_subnet.aks.id
-    os_disk_size_gb     = 30
-    type                = "VirtualMachineScaleSets"
+    name            = "systempool"
+    node_count      = var.aks_node_count
+    vm_size         = var.aks_node_vm_size
+    vnet_subnet_id  = azurerm_subnet.aks.id
+    os_disk_size_gb = 30
+    type            = "VirtualMachineScaleSets"
 
     # Disable auto-scaling to maintain fixed node count
     enable_auto_scaling = false
