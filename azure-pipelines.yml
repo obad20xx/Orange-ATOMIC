@@ -149,10 +149,10 @@ stages:
           vmImage: 'ubuntu-latest'
         steps:
           - script: |
-              wget -q https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
-              unzip -q terraform_1.8.5_linux_amd64.zip
-              sudo mv terraform /usr/local/bin/
-              terraform --version
+              mkdir -p $(Agent.TempDirectory)/bin
+              wget -q --timeout=15 --tries=3 https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
+              unzip -o -q terraform_1.8.5_linux_amd64.zip -d $(Agent.TempDirectory)/bin
+              echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
             displayName: 'Install Terraform'
 
           - script: |
@@ -368,10 +368,10 @@ stages:
               downloadPath: '$(System.ArtifactsDirectory)'
 
           - script: |
-              wget -q https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
-              unzip -q terraform_1.8.5_linux_amd64.zip
-              sudo mv terraform /usr/local/bin/
-              terraform --version
+              mkdir -p $(Agent.TempDirectory)/bin
+              wget -q --timeout=15 --tries=3 https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
+              unzip -o -q terraform_1.8.5_linux_amd64.zip -d $(Agent.TempDirectory)/bin
+              echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
             displayName: 'Install Terraform'
 
           - task: AzureCLI@2
