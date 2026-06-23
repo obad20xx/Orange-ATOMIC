@@ -164,7 +164,7 @@ stages:
           - script: |
               set -euo pipefail
               mkdir -p $(Agent.TempDirectory)/bin
-              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
+              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.71.2/trivy_0.71.2_Linux-64bit.tar.gz
               tar -xzf trivy.tar.gz -C $(Agent.TempDirectory)/bin trivy
               echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
               $(Agent.TempDirectory)/bin/trivy --version
@@ -227,7 +227,7 @@ stages:
           - script: |
               set -euo pipefail
               mkdir -p $(Agent.TempDirectory)/bin
-              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
+              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.71.2/trivy_0.71.2_Linux-64bit.tar.gz
               tar -xzf trivy.tar.gz -C $(Agent.TempDirectory)/bin trivy
               
               # Retrieve variables set in previous steps
@@ -299,7 +299,7 @@ stages:
           - script: |
               set -euo pipefail
               mkdir -p $(Agent.TempDirectory)/bin
-              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.51.1/trivy_0.51.1_Linux-64bit.tar.gz
+              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.71.2/trivy_0.71.2_Linux-64bit.tar.gz
               tar -xzf trivy.tar.gz -C $(Agent.TempDirectory)/bin trivy
               ACR_LOGIN_SERVER=$(az acr list --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" --query "[?contains(name,'atomic')].loginServer | [0]" --output tsv 2>/dev/null || echo "placeholder.azurecr.io")
               
