@@ -161,9 +161,10 @@ stages:
             displayName: 'Verify Terraform code formatting'
 
           - script: |
-              # Download and install Trivy binary locally on the agent
-              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.51.1
-              trivy --version
+              mkdir -p $(Agent.TempDirectory)/bin
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $(Agent.TempDirectory)/bin v0.51.1
+              echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
+              $(Agent.TempDirectory)/bin/trivy --version
             displayName: 'Install Trivy Scanner'
 
           - script: |
@@ -221,14 +222,14 @@ stages:
                   "$(Build.SourcesDirectory)/ATOMIC-Backend"
 
           - script: |
-              # Install Trivy
-              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.51.1
+              mkdir -p $(Agent.TempDirectory)/bin
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $(Agent.TempDirectory)/bin v0.51.1
               
               # Retrieve variables set in previous steps
               ACR_LOGIN_SERVER=$(az acr list --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" --query "[?contains(name,'atomic')].loginServer | [0]" --output tsv 2>/dev/null || echo "placeholder.azurecr.io")
               
               echo "Scanning built Backend image..."
-              trivy image --severity HIGH,CRITICAL --exit-code 0 "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)"
+              $(Agent.TempDirectory)/bin/trivy image --severity HIGH,CRITICAL --exit-code 0 "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)"
             displayName: 'Trivy: Scan Backend Image for Vulnerabilities'
 
           - task: AzureCLI@2
@@ -291,11 +292,12 @@ stages:
                   "$(Build.SourcesDirectory)/ATOMIC-Frontend"
 
           - script: |
-              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.51.1
+              mkdir -p $(Agent.TempDirectory)/bin
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $(Agent.TempDirectory)/bin v0.51.1
               ACR_LOGIN_SERVER=$(az acr list --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" --query "[?contains(name,'atomic')].loginServer | [0]" --output tsv 2>/dev/null || echo "placeholder.azurecr.io")
               
               echo "Scanning built Frontend image..."
-              trivy image --severity HIGH,CRITICAL --exit-code 0 "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)"
+              $(Agent.TempDirectory)/bin/trivy image --severity HIGH,CRITICAL --exit-code 0 "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)"
             displayName: 'Trivy: Scan Frontend Image for Vulnerabilities'
 
           - task: AzureCLI@2
