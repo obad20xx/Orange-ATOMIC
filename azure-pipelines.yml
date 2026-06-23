@@ -183,16 +183,16 @@ stages:
               testRunTitle: 'Frontend Vitest Tests'
 
   # =========================================================================
-  # STAGE 2: Infrastructure Continuous Delivery (PRs and azure)
-  # Runs Terraform Plan on PRs; runs Terraform Apply on merges to azure.
+  # STAGE 2: Infrastructure CD — Phase 1 (ACR Only)
+  # Provisions the Azure Container Registry first so it is available for build.
   # =========================================================================
-  - stage: InfraCD
-    displayName: '🏗️  Stage 2 — Infrastructure CD'
+  - stage: InfraCD_ACR
+    displayName: '🏗️  Stage 2 — Infra CD (ACR)'
     dependsOn: Validate
     condition: succeeded()
     jobs:
-      - job: terraform_operations
-        displayName: 'Terraform Plan & Apply Operations'
+      - job: terraform_acr
+        displayName: 'Terraform Provision ACR'
         pool:
           vmImage: 'ubuntu-latest'
         steps:
@@ -205,7 +205,7 @@ stages:
             displayName: 'Install Terraform'
 
           - task: AzureCLI@2
-            displayName: 'Terraform Init & Plan'
+            displayName: 'Terraform Apply (ACR Only)'
             env:
               ARM_USE_OIDC: true
             inputs:
@@ -224,7 +224,6 @@ stages:
 
                 cd "$(Build.SourcesDirectory)/terraform"
 
-                # Initialize with remote state backend (configured in variables)
                 terraform init \
                   -backend-config="resource_group_name=$(TF_BACKEND_RESOURCE_GROUP)" \
                   -backend-config="storage_account_name=$(TF_BACKEND_STORAGE_ACCOUNT)" \
@@ -232,64 +231,21 @@ stages:
                   -backend-config="key=$(TF_BACKEND_KEY)" \
                   -reconfigure
 
-                # Perform validation and planning
+                # Target only ACR and its dependencies (Resource Group and Suffix)
                 terraform plan \
-                  -out=tfplan \
+                  -target=azurerm_container_registry.main \
+                  -out=tfplan_acr \
                   -input=false
 
-                terraform show -no-color tfplan > tfplan.txt
-                echo "✅ Terraform Plan succeeded"
-
-          - task: PublishPipelineArtifact@1
-            displayName: 'Publish Terraform Plan Text'
-            inputs:
-              targetPath: '$(Build.SourcesDirectory)/terraform/tfplan.txt'
-              artifact: 'terraform-plan'
-              publishLocation: 'pipeline'
-
-          - task: AzureCLI@2
-            displayName: 'Terraform Apply'
-            # Only execute apply on direct pushes/merges to azure
-            condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
-            env:
-              ARM_USE_OIDC: true
-            inputs:
-              azureSubscription: '$(SERVICE_CONNECTION)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              addSpnToEnvironment: true
-              inlineScript: |
-                set -euo pipefail
-
-                export ARM_CLIENT_ID="$servicePrincipalId"
-                export ARM_OIDC_TOKEN="$idToken"
-                export ARM_TENANT_ID="$tenantId"
-                export ARM_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
-                export ARM_USE_OIDC=true
-
-                cd "$(Build.SourcesDirectory)/terraform"
-
-                # Re-apply the configured plan
-                terraform apply -auto-approve -input=false tfplan
-                echo "✅ Terraform Apply succeeded"
-
-                # Extract and persist resource outputs to pipeline variables
-                AKS_CLUSTER_NAME=$(terraform output -raw aks_cluster_name)
-                RESOURCE_GROUP=$(terraform output -raw resource_group_name)
-                ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
-                FLEXIBLE_SERVER_FQDN=$(terraform output -raw flexible_server_fqdn)
-                KEY_VAULT_URI=$(terraform output -raw key_vault_uri)
-                BACKEND_CLIENT_ID=$(terraform output -raw backend_identity_client_id)
-
-                echo "##vso[task.setvariable variable=AKS_CLUSTER_NAME;isOutput=true]$AKS_CLUSTER_NAME"
-                echo "##vso[task.setvariable variable=RESOURCE_GROUP;isOutput=true]$RESOURCE_GROUP"
-                echo "##vso[task.setvariable variable=ACR_LOGIN_SERVER;isOutput=true]$ACR_LOGIN_SERVER"
-                echo "##vso[task.setvariable variable=FLEXIBLE_SERVER_FQDN;isOutput=true]$FLEXIBLE_SERVER_FQDN"
-                echo "##vso[task.setvariable variable=KEY_VAULT_URI;isOutput=true]$KEY_VAULT_URI"
-                echo "##vso[task.setvariable variable=BACKEND_CLIENT_ID;isOutput=true]$BACKEND_CLIENT_ID"
-
-                echo "Outputs stored successfully."
-            name: tf_outputs
+                # Only apply on direct merges/pushes to branch, plan on PRs
+                if [ "$(Build.Reason)" != "PullRequest" ]; then
+                  terraform apply -auto-approve tfplan_acr
+                  ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
+                  echo "##vso[task.setvariable variable=ACR_LOGIN_SERVER;isOutput=true]$ACR_LOGIN_SERVER"
+                else
+                  echo "Skipping apply on Pull Request"
+                fi
+            name: tf_acr_outputs
 
   # =========================================================================
   # STAGE 3: Build & Package (PRs and azure)
@@ -298,10 +254,10 @@ stages:
   # =========================================================================
   - stage: Build
     displayName: '🐳 Stage 3 — Build & Vulnerability Scan'
-    dependsOn: InfraCD
+    dependsOn: InfraCD_ACR
     condition: succeeded()
     variables:
-      ACR_LOGIN_SERVER_OUT: $[ stageDependencies.InfraCD.terraform_operations.outputs['tf_outputs.ACR_LOGIN_SERVER'] ]
+      ACR_LOGIN_SERVER_OUT: $[ stageDependencies.InfraCD_ACR.terraform_acr.outputs['tf_acr_outputs.ACR_LOGIN_SERVER'] ]
     jobs:
       # ---------------------------------------------------------------------
       # Job: build_backend_docker
@@ -490,22 +446,94 @@ stages:
               publishLocation: 'Container'
 
   # =========================================================================
-  # STAGE 4: Application Deployment (Azure commits only, protected Environment)
+  # STAGE 4: Infrastructure CD — Phase 2 (AKS & Rest of App Resources)
+  # Provisions AKS, Key Vault, Database, etc. after images are built.
+  # =========================================================================
+  - stage: InfraCD_App
+    displayName: '🏗️  Stage 4 — Infra CD (App)'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: terraform_app
+        displayName: 'Terraform Provision App Resources'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - script: |
+              set -euo pipefail
+              mkdir -p $(Agent.TempDirectory)/bin
+              curl -L -s -S -o terraform.zip https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
+              unzip -o -q terraform.zip -d $(Agent.TempDirectory)/bin
+              echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
+            displayName: 'Install Terraform'
+
+          - task: AzureCLI@2
+            displayName: 'Terraform Apply (Full)'
+            env:
+              ARM_USE_OIDC: true
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              addSpnToEnvironment: true
+              inlineScript: |
+                set -euo pipefail
+
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_OIDC_TOKEN="$idToken"
+                export ARM_TENANT_ID="$tenantId"
+                export ARM_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
+                export ARM_USE_OIDC=true
+
+                cd "$(Build.SourcesDirectory)/terraform"
+
+                terraform init \
+                  -backend-config="resource_group_name=$(TF_BACKEND_RESOURCE_GROUP)" \
+                  -backend-config="storage_account_name=$(TF_BACKEND_STORAGE_ACCOUNT)" \
+                  -backend-config="container_name=$(TF_BACKEND_CONTAINER)" \
+                  -backend-config="key=$(TF_BACKEND_KEY)" \
+                  -reconfigure
+
+                terraform plan -out=tfplan_app -input=false
+
+                if [ "$(Build.Reason)" != "PullRequest" ]; then
+                  terraform apply -auto-approve tfplan_app
+                  
+                  AKS_CLUSTER_NAME=$(terraform output -raw aks_cluster_name)
+                  RESOURCE_GROUP=$(terraform output -raw resource_group_name)
+                  ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
+                  FLEXIBLE_SERVER_FQDN=$(terraform output -raw flexible_server_fqdn)
+                  KEY_VAULT_URI=$(terraform output -raw key_vault_uri)
+                  BACKEND_CLIENT_ID=$(terraform output -raw backend_identity_client_id)
+
+                  echo "##vso[task.setvariable variable=AKS_CLUSTER_NAME;isOutput=true]$AKS_CLUSTER_NAME"
+                  echo "##vso[task.setvariable variable=RESOURCE_GROUP;isOutput=true]$RESOURCE_GROUP"
+                  echo "##vso[task.setvariable variable=ACR_LOGIN_SERVER;isOutput=true]$ACR_LOGIN_SERVER"
+                  echo "##vso[task.setvariable variable=FLEXIBLE_SERVER_FQDN;isOutput=true]$FLEXIBLE_SERVER_FQDN"
+                  echo "##vso[task.setvariable variable=KEY_VAULT_URI;isOutput=true]$KEY_VAULT_URI"
+                  echo "##vso[task.setvariable variable=BACKEND_CLIENT_ID;isOutput=true]$BACKEND_CLIENT_ID"
+                else
+                  echo "Skipping apply on Pull Request"
+                fi
+            name: tf_app_outputs
+
+  # =========================================================================
+  # STAGE 5: Application Deployment (Azure commits only, protected Environment)
   # Uses ADO Environment gates, injects secrets, checks health, and handles rollbacks.
   # =========================================================================
   - stage: Deploy
-    displayName: '🚀 Stage 4 — Application Deployment'
+    displayName: '🚀 Stage 5 — Application Deployment'
     dependsOn:
-      - InfraCD
+      - InfraCD_App
       - Build
     condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     variables:
-      AKS_CLUSTER_NAME: $[ stageDependencies.InfraCD.terraform_operations.outputs['tf_outputs.AKS_CLUSTER_NAME'] ]
-      RESOURCE_GROUP:   $[ stageDependencies.InfraCD.terraform_operations.outputs['tf_outputs.RESOURCE_GROUP'] ]
-      ACR_LOGIN_SERVER: $[ stageDependencies.InfraCD.terraform_operations.outputs['tf_outputs.ACR_LOGIN_SERVER'] ]
-      FLEXIBLE_SERVER_FQDN: $[ stageDependencies.InfraCD.terraform_operations.outputs['tf_outputs.FLEXIBLE_SERVER_FQDN'] ]
-      KEY_VAULT_URI:    $[ stageDependencies.InfraCD.terraform_operations.outputs['tf_outputs.KEY_VAULT_URI'] ]
-      BACKEND_CLIENT_ID:  $[ stageDependencies.InfraCD.terraform_operations.outputs['tf_outputs.BACKEND_CLIENT_ID'] ]
+      AKS_CLUSTER_NAME: $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.AKS_CLUSTER_NAME'] ]
+      RESOURCE_GROUP:   $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.RESOURCE_GROUP'] ]
+      ACR_LOGIN_SERVER: $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.ACR_LOGIN_SERVER'] ]
+      FLEXIBLE_SERVER_FQDN: $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.FLEXIBLE_SERVER_FQDN'] ]
+      KEY_VAULT_URI:    $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.KEY_VAULT_URI'] ]
+      BACKEND_CLIENT_ID:  $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.BACKEND_CLIENT_ID'] ]
     jobs:
       - deployment: deploy_aks
         displayName: 'Deploy to AKS & Verify Health'
