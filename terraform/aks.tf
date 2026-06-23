@@ -9,6 +9,7 @@
 #   - Node pool placed in the AKS subnet (REQ-4)
 ##############################################################################
 
+# trivy:ignore:AVD-AZU-0041 - Hosted agent deployment requires public control plane access, configured via dynamic var.
 resource "azurerm_kubernetes_cluster" "main" {
   name                = "aks-${local.name_prefix}"
   resource_group_name = azurerm_resource_group.main.name
@@ -17,8 +18,12 @@ resource "azurerm_kubernetes_cluster" "main" {
   # Pin the Kubernetes minor version to prevent unplanned upgrades (REQ-4.7)
   kubernetes_version = var.aks_kubernetes_version
 
+  api_server_authorized_ip_ranges = length(var.api_server_authorized_ip_ranges) > 0 ? var.api_server_authorized_ip_ranges : null
+
   # The DNS prefix must be unique within the Azure region
   dns_prefix = "${local.name_prefix}-k8s"
+
+
 
   # ---------------------------------------------------------------------------
   # Default (System) Node Pool

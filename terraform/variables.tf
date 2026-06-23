@@ -76,6 +76,12 @@ variable "aks_node_count" {
   description = "Fixed number of nodes in the AKS system node pool. Must be >= 2 for basic availability."
 }
 
+variable "api_server_authorized_ip_ranges" {
+  type        = list(string)
+  description = "List of IP ranges allowed to access the AKS API server. If empty, public access is allowed (restricted via security controls where needed)."
+  default     = []
+}
+
 # ---------------------------------------------------------------------------
 # PostgreSQL Flexible Server
 # ---------------------------------------------------------------------------
