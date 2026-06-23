@@ -148,11 +148,6 @@ stages:
         pool:
           vmImage: 'ubuntu-latest'
         steps:
-          - task: TerraformInstaller@1
-            displayName: 'Install Terraform'
-            inputs:
-              terraformVersion: 'latest'
-
           - script: |
               cd "$(TERRAFORM_DIR)"
               terraform fmt -check
@@ -364,11 +359,6 @@ stages:
               downloadType: 'single'
               artifactName: 'deployment-assets'
               downloadPath: '$(System.ArtifactsDirectory)'
-
-          - task: TerraformInstaller@1
-            displayName: 'Install Terraform'
-            inputs:
-              terraformVersion: 'latest'
 
           - task: AzureCLI@2
             displayName: 'Terraform Init & Plan'
