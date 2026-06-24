@@ -47,77 +47,92 @@ graph TD
 
 ## 2. Low-Level Architecture (CI/CD Pipeline)
 
-The CI/CD pipeline is built using Azure Pipelines. It uses a single concurrent agent slot structure, optimized for speed using stage consolidation, BuildKit cache registries, and local database caching.
+The CI/CD pipeline is built using Azure Pipelines. It uses a single concurrent agent slot structure, optimized for speed using stage consolidation, BuildKit cache registries, dependency caching, and conditional execution paths for Pull Requests vs. Main Branch Pushes.
 
 ```mermaid
 graph TD
-    Commit[Git Commit / PR on Azure branch] --> Stage1[Stage 1: Validate, Lint & Test]
+    Trigger[Commit or PR on Azure branch] --> Stage1[Stage 1: Validate, Lint & Test]
     
-    subgraph Validate Job
-        Stage1 --> InstallTools[Install Terraform & Trivy]
-        InstallTools --> FormatCheck[Format Check & Trivy Config Audits]
-        FormatCheck --> ParallelTests[Parallel Backend Gradle & Frontend Vitest Tests]
+    subgraph Stage1_Job ["Stage 1: Validate, Lint & Test (All Runs)"]
+        Stage1 --> InstallTools1[Install Terraform & Trivy]
+        InstallTools1 --> FormatCheck[Terraform Format Check]
+        FormatCheck --> TrivyAudits[Trivy Config Audits: K8s & Terraform]
+        TrivyAudits --> RunTests[Parallel Unit Tests: Backend Java & Frontend Vitest]
+        RunTests --> PubResults[Publish JUnit Test Results]
     end
     
-    ParallelTests --> Stage2[Stage 2: InfraCD - Terraform]
+    PubResults --> Stage2[Stage 2: Infra CD (All Runs)]
     
-    subgraph Infra CD Job
+    subgraph Stage2_Job ["Stage 2: Infra CD (Terraform)"]
         Stage2 --> TFInit[Terraform Init & Plan]
-        TFInit -->|If Commit| TFApply[Terraform Apply]
-        TFInit -->|If PR| TFStop[Stop Pipeline]
+        TFInit --> PRCheck2{Is Pull Request?}
+        PRCheck2 -->|Yes| SkipApply[Skip Apply & Outputs]
+        PRCheck2 -->|No| TFApply[Terraform Apply & Save Output Variables]
     end
     
-    TFApply --> Stage3[Stage 3: Build & Package]
+    SkipApply --> Stage3[Stage 3: Build & Scan (All Runs)]
+    TFApply --> Stage3
     
-    subgraph Build Job
-        Stage3 --> ACRLogin[ACR Login]
-        ACRLogin --> DockerBuild[Docker Build using BuildKit Caching]
-        DockerBuild --> TrivyScan[Trivy Image Scan]
-        TrivyScan --> DockerPush[Docker Push to ACR]
-        DockerPush --> PublishArtifacts[Publish Kubernetes/Terraform Blueprints]
+    subgraph Stage3_Job ["Stage 3: Build & Scan"]
+        Stage3 --> ACRLogin[ACR Login & Resolve Server]
+        ACRLogin --> BuildImages[Build Docker Images with BuildKit Caching]
+        BuildImages --> TrivyScan[Trivy Image Scan Backend & Frontend]
+        TrivyScan --> PRCheck3{Is Pull Request?}
+        PRCheck3 -->|Yes| SkipPush[Skip Push to ACR]
+        PRCheck3 -->|No| PushACR[Push Images to ACR: latest & SHA tags]
+        SkipPush --> PubArtifacts[Publish Blueprints Artifact: deployment-assets]
+        PushACR --> PubArtifacts
     end
     
-    PublishArtifacts --> Stage4[Stage 4: Deploy & Verify]
+    PubArtifacts --> PRCheck4{Is Pull Request?}
+    PRCheck4 -->|Yes| EndPR[End Pipeline: PR Validation Success]
+    PRCheck4 -->|No| GatedEnv[Stage 4: Deploy - Gated Production Environment Approval]
     
-    subgraph Deploy Job
-        Stage4 --> ConnectAKS[Connect to AKS using Admin Certificate]
-        ConnectAKS --> HelmIngress[Ensure Ingress Controller via Helm]
-        HelmIngress --> EnvSubst[Substitute Placeholders in Manifests]
+    subgraph Stage4_Job ["Stage 4: Application Deployment"]
+        GatedEnv --> DownloadArt[Download Blueprints Artifact]
+        DownloadArt --> ConnectAKS[Connect to AKS Cluster using Admin Cert]
+        ConnectAKS --> HelmIngress[Ensure Nginx Ingress Controller v4.10.1]
+        HelmIngress --> EnvSubst[Compile Manifests via selective envsubst]
         EnvSubst --> KubeApply[Kubectl Apply Manifests]
-        KubeApply --> RolloutVerify{Rollout Status Healthy?}
-        RolloutVerify -->|Yes| Live[Deployment Live & Summary Printed]
-        RolloutVerify -->|No| Rollback[Rollback: Kubectl Rollout Undo]
+        KubeApply --> RolloutVerify{Rollout Status Healthy? 8m Timeout}
+        RolloutVerify -->|Yes| Live[Live: Print External IP Address]
+        RolloutVerify -->|No| RollbackHook[Failure Hook: Trigger Automatic Rollback]
+        RollbackHook --> RollbackUndo[Kubectl Rollout Undo Backend/Frontend]
     end
 ```
 
 ### Detailed Pipeline Workflow
 
 #### Stage 1: Validate, Lint & Audit
-- Installs Terraform and Trivy.
-- Restores Trivy vulnerability DB cache (`$(HOME)/.cache/trivy`) to save download times.
-- Audits Terraform and Kubernetes manifests for misconfigurations.
-- Restores the Gradle dependencies cache (`$(HOME)/.gradle`) and runs Spring Boot unit tests.
-- Restores the npm cache (`$(HOME)/.npm`) and runs Vitest tests.
+- **Tool Installation**: Installs Terraform and Trivy on demand.
+- **Linting & Security Audits**: Verifies Terraform formatting (`terraform fmt -check`) and audits both Kubernetes manifests and Terraform code using Trivy (`trivy config`).
+- **Caching**: Caches the Trivy vulnerability database (`$(HOME)/.cache/trivy`) to minimize scan delays.
+- **Backend Tests**: Restores the Gradle dependencies cache (`$(HOME)/.gradle`), installs Java 21, runs Gradle unit tests (`./gradlew test`), and publishes JUnit test results.
+- **Frontend Tests**: Restores the npm cache (`$(HOME)/.npm`), installs Node.js 20, installs npm dependencies (`npm ci`), runs Vitest tests (`npx vitest`), and publishes JUnit test results.
 
 #### Stage 2: Infrastructure CD (`InfraCD`)
-- Consolidated into a single stage to run `terraform apply` once for all resources.
-- On PRs: Generates a `terraform plan` and exits to allow review.
-- On Direct Commits: Runs `terraform apply` to provision ACR, AKS, Key Vault, and PostgreSQL. It outputs endpoints and client IDs.
+- **Terraform Run**: Performs `terraform init` using a consolidated Azure backend, followed by `terraform plan`.
+- **Conditional Apply**: 
+  - **On Pull Requests**: Skips `terraform apply` to allow review of proposed infrastructure plan.
+  - **On Direct Pushes (Branch `Azure`)**: Executes `terraform apply -auto-approve` to provision AKS, Database, Key Vault, and ACR.
+- **Output Passing**: Captures dynamic outputs (e.g. `AKS_CLUSTER_NAME`, `FLEXIBLE_SERVER_FQDN`, `KEY_VAULT_URI`, `BACKEND_CLIENT_ID`) and converts them into pipeline variables.
 
-#### Stage 3: Build & Package
-- Logs into ACR using the service connection.
-- Builds backend and frontend Docker containers utilizing Docker BuildKit caching (`--cache-from`) to reuse unchanged layers directly from ACR.
-- Scans both built images using Trivy for security vulnerabilities.
-- Pushes the images to ACR.
-- Collects Kubernetes manifests and Terraform configurations, publishing them as a pipeline artifact (`deployment-assets`).
+#### Stage 3: Build & Package (`Build`)
+- **ACR Authentication**: Logs in to Azure Container Registry (ACR). If the ACR has not been fully provisioned (e.g., in a PR dry-run), it resolves/falls back dynamically to query the ACR name.
+- **Docker Build (BuildKit)**: Builds frontend and backend Docker containers using Docker BuildKit caching (`--cache-from`) referenced to `:latest` registry tags to accelerate build times.
+- **Trivy Image Scan**: Performs pre-push security scans on both backend and frontend images (`trivy image`).
+- **Conditional Registry Push**:
+  - **On Pull Requests**: Skips pushing the built images to the registry.
+  - **On Direct Pushes**: Pushes images to the ACR tagged with the Git commit SHA (`Build.SourceVersion`) and `latest`.
+- **Artifact Publishing**: Packs the Kubernetes and Terraform blueprints and publishes them as a pipeline artifact named `deployment-assets`.
 
-#### Stage 4: Deploy & Rollback
-- Downloads the `deployment-assets` blueprints.
-- Connects to the AKS cluster using admin credentials.
-- Installs or upgrades the Nginx Ingress Controller using Helm.
-- Compiles the Kubernetes manifests using a restricted `envsubst` to replace placeholders (`${ACR_LOGIN_SERVER}`, `${IMAGE_TAG}`, `${KEY_VAULT_URI}`, etc.) without corrupting Nginx's internal variable names (like `$host` and `$remote_addr`).
-- Deploys the namespace, configmaps, services, service accounts, and deployments.
-- Monitors the rollout status. If the health checks fail or time out, the pipeline executes `kubectl rollout undo` to immediately rollback to the previous stable release.
+#### Stage 4: Deploy & Rollback (`Deploy`)
+- **Condition**: Only triggers on direct pushes/commits (skips on PRs) and is gated by the **production** Environment (which requires manual approval gates in Azure DevOps).
+- **Cluster Connection**: Downloads the `deployment-assets` artifact and establishes a connection to the AKS cluster using admin credentials.
+- **Nginx Ingress**: Installs or upgrades Nginx Ingress Controller (v4.10.1) in the `ingress-nginx` namespace using Helm.
+- **Manifest Compilation & Deployment**: Compiles Kubernetes manifests using a selective `envsubst` to inject specific variables (`$ACR_LOGIN_SERVER`, `$IMAGE_TAG`, `$FLEXIBLE_SERVER_FQDN`, `$KEY_VAULT_URI`, `$AZURE_CLIENT_ID`) without corrupting Nginx configurations, and applies them to the cluster.
+- **Parallel Health Verification**: Monitors rollout status of both backend and frontend deployments in parallel (8-minute timeout). If both succeed, the ingress public IP is resolved and printed.
+- **Automated Rollback**: If any deployment step fails, an Azure Pipelines `on: failure` hook automatically runs `kubectl rollout undo` for both backend and frontend deployments to restore the last stable state.
 
 ---
 
