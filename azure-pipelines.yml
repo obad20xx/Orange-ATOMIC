@@ -638,7 +638,8 @@ stages:
                       az aks get-credentials \
                         --resource-group "$(RESOURCE_GROUP)" \
                         --name "$(AKS_CLUSTER_NAME)" \
-                        --overwrite-existing
+                        --overwrite-existing \
+                        --admin
                       kubectl cluster-info
 
                 - script: |
@@ -755,7 +756,8 @@ stages:
                         az aks get-credentials \
                           --resource-group "$(RESOURCE_GROUP)" \
                           --name "$(AKS_CLUSTER_NAME)" \
-                          --overwrite-existing
+                          --overwrite-existing \
+                          --admin
                         
                         echo "Reverting Backend deployment to previous replica..."
                         kubectl rollout undo deployment/backend -n production
