@@ -97,11 +97,8 @@ stages:
   - stage: Validate
     displayName: '🧪 Stage 1 — Validate, Lint & Audit'
     jobs:
-      # ---------------------------------------------------------------------
-      # Job: lint_and_security_scan (Trivy audits + Terraform checks)
-      # ---------------------------------------------------------------------
-      - job: lint_and_security_scan
-        displayName: 'Security Auditing & Format Checks'
+      - job: validate_and_test
+        displayName: 'Validate, Lint & Test Codebase'
         pool:
           vmImage: 'ubuntu-latest'
         steps:
@@ -127,6 +124,14 @@ stages:
               $(Agent.TempDirectory)/bin/trivy --version
             displayName: 'Install Trivy Scanner'
 
+          - task: Cache@2
+            displayName: 'Cache Trivy Vulnerability Database'
+            inputs:
+              key: 'trivy | "$(Agent.OS)"'
+              restoreKeys: |
+                trivy
+              path: '$(HOME)/.cache/trivy'
+
           - script: |
               echo "Scanning Kubernetes manifests..."
               trivy config --severity HIGH,CRITICAL --exit-code 1 "$(K8S_DIR)"
@@ -137,15 +142,6 @@ stages:
               trivy config --severity HIGH,CRITICAL --exit-code 1 "$(TERRAFORM_DIR)"
             displayName: 'Trivy: Audit Infrastructure Configurations'
 
-      # ---------------------------------------------------------------------
-      # Job: test_backend (Java 21 unit tests)
-      # ---------------------------------------------------------------------
-      - job: test_backend
-        displayName: 'Backend — Gradle Tests (Java 21)'
-        dependsOn: lint_and_security_scan
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
           - task: Cache@2
             displayName: 'Cache Gradle dependencies'
             inputs:
@@ -165,7 +161,7 @@ stages:
           - script: |
               chmod +x ./gradlew
               ./gradlew test --no-daemon --continue
-            displayName: 'Run Gradle test suite'
+            displayName: 'Run Backend Gradle tests'
             workingDirectory: '$(Build.SourcesDirectory)/ATOMIC-Backend'
 
           - task: PublishTestResults@2
@@ -178,23 +174,13 @@ stages:
               failTaskOnFailedTests: true
               testRunTitle: 'Backend Unit Tests'
 
-      # ---------------------------------------------------------------------
-      # Job: test_frontend (Node 20 component tests)
-      # ---------------------------------------------------------------------
-      - job: test_frontend
-        displayName: 'Frontend — Vitest Tests (Node 20)'
-        dependsOn: lint_and_security_scan
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
           - task: Cache@2
             displayName: 'Cache npm dependencies'
             inputs:
               key: 'npm | "$(Agent.OS)" | ATOMIC-Frontend/package-lock.json'
               restoreKeys: |
                 npm | "$(Agent.OS)"
-                npm
-              path: '$(Build.SourcesDirectory)/ATOMIC-Frontend/node_modules'
+              path: '$(HOME)/.npm'
 
           - task: UseNode@1
             displayName: 'Install Node.js 20'
@@ -208,7 +194,7 @@ stages:
 
           - script: |
               npx vitest --run --reporter=junit --outputFile=test-results/vitest-junit.xml
-            displayName: 'Run Vitest test suite'
+            displayName: 'Run Frontend Vitest tests'
             workingDirectory: '$(Build.SourcesDirectory)/ATOMIC-Frontend'
 
           - task: PublishTestResults@2
@@ -222,298 +208,16 @@ stages:
               testRunTitle: 'Frontend Vitest Tests'
 
   # =========================================================================
-  # STAGE 2: Infrastructure CD — Phase 1 (ACR Only)
-  # Provisions the Azure Container Registry first so it is available for build.
+  # STAGE 2: Infrastructure CD (All Resources)
+  # Provisions AKS, Key Vault, Database, and ACR in a single stage.
   # =========================================================================
-  - stage: InfraCD_ACR
-    displayName: '🏗️  Stage 2 — Infra CD (ACR)'
+  - stage: InfraCD
+    displayName: '🏗️  Stage 2 — Infra CD'
     dependsOn: Validate
     condition: succeeded()
     jobs:
-      - job: terraform_acr
-        displayName: 'Terraform Provision ACR'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - script: |
-              set -euo pipefail
-              mkdir -p $(Agent.TempDirectory)/bin
-              curl -L -s -S -o terraform.zip https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip
-              unzip -o -q terraform.zip -d $(Agent.TempDirectory)/bin
-              echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
-            displayName: 'Install Terraform'
-
-          - task: AzureCLI@2
-            displayName: 'Terraform Apply (ACR Only)'
-            env:
-              ARM_USE_OIDC: true
-              TF_VAR_location: $(TF_VAR_location)
-              TF_VAR_environment: $(TF_VAR_environment)
-              TF_VAR_project: $(TF_VAR_project)
-              TF_VAR_vnet_address_space: $(TF_VAR_vnet_address_space)
-              TF_VAR_public_subnet_cidr: $(TF_VAR_public_subnet_cidr)
-              TF_VAR_aks_subnet_cidr: $(TF_VAR_aks_subnet_cidr)
-              TF_VAR_db_subnet_cidr: $(TF_VAR_db_subnet_cidr)
-              TF_VAR_acr_sku: $(TF_VAR_acr_sku)
-              TF_VAR_aks_kubernetes_version: $(TF_VAR_aks_kubernetes_version)
-              TF_VAR_aks_node_vm_size: $(TF_VAR_aks_node_vm_size)
-              TF_VAR_aks_node_count: $(TF_VAR_aks_node_count)
-              TF_VAR_postgres_sku_name: $(TF_VAR_postgres_sku_name)
-              TF_VAR_postgres_version: $(TF_VAR_postgres_version)
-              TF_VAR_postgres_storage_mb: $(TF_VAR_postgres_storage_mb)
-              TF_VAR_postgres_admin_login: $(TF_VAR_postgres_admin_login)
-              TF_VAR_postgres_db_name: $(TF_VAR_postgres_db_name)
-              TF_VAR_enable_public_access: $(TF_VAR_enable_public_access)
-              TF_VAR_keyvault_soft_delete_retention_days: $(TF_VAR_keyvault_soft_delete_retention_days)
-              TF_VAR_pipeline_agent_ip_range: $(TF_VAR_pipeline_agent_ip_range)
-            inputs:
-              azureSubscription: '$(SERVICE_CONNECTION)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              addSpnToEnvironment: true
-              inlineScript: |
-                set -euo pipefail
-
-                export ARM_CLIENT_ID="$servicePrincipalId"
-                export ARM_OIDC_TOKEN="$idToken"
-                export ARM_TENANT_ID="$tenantId"
-                export ARM_SUBSCRIPTION_ID="$(AZURE_SUBSCRIPTION_ID)"
-                export ARM_USE_OIDC=true
-
-                cd "$(Build.SourcesDirectory)/terraform"
-
-                terraform init \
-                  -backend-config="resource_group_name=$(TF_BACKEND_RESOURCE_GROUP)" \
-                  -backend-config="storage_account_name=$(TF_BACKEND_STORAGE_ACCOUNT)" \
-                  -backend-config="container_name=$(TF_BACKEND_CONTAINER)" \
-                  -backend-config="key=$(TF_BACKEND_KEY)" \
-                  -reconfigure
-
-                # Target only ACR and its dependencies (Resource Group and Suffix)
-                terraform plan \
-                  -target=azurerm_container_registry.main \
-                  -out=tfplan_acr \
-                  -input=false
-
-                # Only apply on direct merges/pushes to branch, plan on PRs
-                if [ "$(Build.Reason)" != "PullRequest" ]; then
-                  terraform apply -auto-approve tfplan_acr
-                  ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
-                  echo "##vso[task.setvariable variable=ACR_LOGIN_SERVER;isOutput=true]$ACR_LOGIN_SERVER"
-                else
-                  echo "Skipping apply on Pull Request"
-                fi
-            name: tf_acr_outputs
-
-  # =========================================================================
-  # STAGE 3: Build & Package (PRs and azure)
-  # Builds Docker images, scans them for vulnerabilities, and pushes to ACR.
-  # Publishes configuration blueprints as Pipeline Artifacts.
-  # =========================================================================
-  - stage: Build
-    displayName: '🐳 Stage 3 — Build & Vulnerability Scan'
-    dependsOn: InfraCD_ACR
-    condition: succeeded()
-    variables:
-      ACR_LOGIN_SERVER_OUT: $[ stageDependencies.InfraCD_ACR.terraform_acr.outputs['tf_acr_outputs.ACR_LOGIN_SERVER'] ]
-    jobs:
-      # ---------------------------------------------------------------------
-      # Job: build_backend_docker
-      # ---------------------------------------------------------------------
-      - job: build_backend_docker
-        displayName: 'Build & Scan Backend Image'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: AzureCLI@2
-            displayName: 'Build Backend Docker Image'
-            inputs:
-              azureSubscription: '$(SERVICE_CONNECTION)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -euo pipefail
-                
-                ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_OUT)"
-                if [ -z "$ACR_LOGIN_SERVER" ] || [[ "$ACR_LOGIN_SERVER" == \$* ]]; then
-                  ACR_LOGIN_SERVER=$(az acr list \
-                    --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" \
-                    --query "[?contains(name,'atomic')].loginServer | [0]" \
-                    --output tsv 2>/dev/null || echo "")
-                fi
-
-                if [ -z "$ACR_LOGIN_SERVER" ]; then
-                  echo "##[warning] ACR not yet provisioned. Building with placeholder ACR URL."
-                  ACR_LOGIN_SERVER="placeholder.azurecr.io"
-                fi
-
-                docker build \
-                  -t "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)" \
-                  -t "$ACR_LOGIN_SERVER/backend:latest" \
-                  -f "$(Build.SourcesDirectory)/ATOMIC-Backend/Dockerfile" \
-                  "$(Build.SourcesDirectory)/ATOMIC-Backend"
-
-          - script: |
-              set -euo pipefail
-              mkdir -p $(Agent.TempDirectory)/bin
-              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.71.2/trivy_0.71.2_Linux-64bit.tar.gz
-              tar -xzf trivy.tar.gz -C $(Agent.TempDirectory)/bin trivy
-              
-              ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_OUT)"
-              if [ -z "$ACR_LOGIN_SERVER" ] || [[ "$ACR_LOGIN_SERVER" == \$* ]]; then
-                ACR_LOGIN_SERVER=$(az acr list --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" --query "[?contains(name,'atomic')].loginServer | [0]" --output tsv 2>/dev/null || echo "placeholder.azurecr.io")
-              fi
-              
-              echo "Scanning built Backend image..."
-              $(Agent.TempDirectory)/bin/trivy image --severity HIGH,CRITICAL --exit-code 0 "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)"
-            displayName: 'Trivy: Scan Backend Image for Vulnerabilities'
-
-          - task: AzureCLI@2
-            displayName: 'Push Backend Image to ACR'
-            # Only push images to ACR on commits to azure, not on PRs
-            condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
-            inputs:
-              azureSubscription: '$(SERVICE_CONNECTION)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -euo pipefail
-                
-                ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_OUT)"
-                if [ -z "$ACR_LOGIN_SERVER" ] || [[ "$ACR_LOGIN_SERVER" == \$* ]]; then
-                  ACR_LOGIN_SERVER=$(az acr list \
-                    --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" \
-                    --query "[?contains(name,'atomic')].loginServer | [0]" \
-                    --output tsv)
-                fi
-                
-                ACR_NAME=$(echo $ACR_LOGIN_SERVER | cut -d. -f1)
-                az acr login --name "$ACR_NAME"
-                
-                docker tag "placeholder.azurecr.io/backend:$(Build.SourceVersion)" "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)" 2>/dev/null || true
-                docker tag "placeholder.azurecr.io/backend:latest" "$ACR_LOGIN_SERVER/backend:latest" 2>/dev/null || true
-
-                docker push "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)"
-                docker push "$ACR_LOGIN_SERVER/backend:latest"
-                echo "✅ Backend image successfully pushed"
-
-      # ---------------------------------------------------------------------
-      # Job: build_frontend_docker
-      # ---------------------------------------------------------------------
-      - job: build_frontend_docker
-        displayName: 'Build & Scan Frontend Image'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: AzureCLI@2
-            displayName: 'Build Frontend Docker Image'
-            inputs:
-              azureSubscription: '$(SERVICE_CONNECTION)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -euo pipefail
-                
-                ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_OUT)"
-                if [ -z "$ACR_LOGIN_SERVER" ] || [[ "$ACR_LOGIN_SERVER" == \$* ]]; then
-                  ACR_LOGIN_SERVER=$(az acr list \
-                    --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" \
-                    --query "[?contains(name,'atomic')].loginServer | [0]" \
-                    --output tsv 2>/dev/null || echo "")
-                fi
-
-                if [ -z "$ACR_LOGIN_SERVER" ]; then
-                  echo "##[warning] ACR not yet provisioned. Building with placeholder ACR URL."
-                  ACR_LOGIN_SERVER="placeholder.azurecr.io"
-                fi
-
-                echo "VITE_API_BASE_URL=/" > "$(Build.SourcesDirectory)/ATOMIC-Frontend/.env.production"
-
-                docker build \
-                  --build-arg VITE_API_BASE_URL=/ \
-                  -t "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)" \
-                  -t "$ACR_LOGIN_SERVER/frontend:latest" \
-                  -f "$(Build.SourcesDirectory)/ATOMIC-Frontend/Dockerfile" \
-                  "$(Build.SourcesDirectory)/ATOMIC-Frontend"
-
-          - script: |
-              set -euo pipefail
-              mkdir -p $(Agent.TempDirectory)/bin
-              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.71.2/trivy_0.71.2_Linux-64bit.tar.gz
-              tar -xzf trivy.tar.gz -C $(Agent.TempDirectory)/bin trivy
-              
-              ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_OUT)"
-              if [ -z "$ACR_LOGIN_SERVER" ] || [[ "$ACR_LOGIN_SERVER" == \$* ]]; then
-                ACR_LOGIN_SERVER=$(az acr list --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" --query "[?contains(name,'atomic')].loginServer | [0]" --output tsv 2>/dev/null || echo "placeholder.azurecr.io")
-              fi
-              
-              echo "Scanning built Frontend image..."
-              $(Agent.TempDirectory)/bin/trivy image --severity HIGH,CRITICAL --exit-code 0 "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)"
-            displayName: 'Trivy: Scan Frontend Image for Vulnerabilities'
-
-          - task: AzureCLI@2
-            displayName: 'Push Frontend Image to ACR'
-            condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
-            inputs:
-              azureSubscription: '$(SERVICE_CONNECTION)'
-              scriptType: 'bash'
-              scriptLocation: 'inlineScript'
-              inlineScript: |
-                set -euo pipefail
-                
-                ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_OUT)"
-                if [ -z "$ACR_LOGIN_SERVER" ] || [[ "$ACR_LOGIN_SERVER" == \$* ]]; then
-                  ACR_LOGIN_SERVER=$(az acr list \
-                    --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" \
-                    --query "[?contains(name,'atomic')].loginServer | [0]" \
-                    --output tsv)
-                fi
-
-                ACR_NAME=$(echo $ACR_LOGIN_SERVER | cut -d. -f1)
-                az acr login --name "$ACR_NAME"
-
-                docker tag "placeholder.azurecr.io/frontend:$(Build.SourceVersion)" "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)" 2>/dev/null || true
-                docker tag "placeholder.azurecr.io/frontend:latest" "$ACR_LOGIN_SERVER/frontend:latest" 2>/dev/null || true
-
-                docker push "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)"
-                docker push "$ACR_LOGIN_SERVER/frontend:latest"
-                echo "✅ Frontend image successfully pushed"
-
-      # ---------------------------------------------------------------------
-      # Job: publish_deployment_assets (Publishes TF and K8s blueprints)
-      # ---------------------------------------------------------------------
-      - job: publish_deployment_assets
-        displayName: 'Publish Deployment Blueprints'
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - task: CopyFiles@2
-            displayName: 'Collect Terraform & Kubernetes Blueprints'
-            inputs:
-              SourceFolder: '$(Build.SourcesDirectory)'
-              Contents: |
-                terraform/**
-                k8s/**
-              TargetFolder: '$(Build.ArtifactStagingDirectory)'
-
-          - task: PublishBuildArtifacts@1
-            displayName: 'Publish Blueprints Artifact'
-            inputs:
-              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'deployment-assets'
-              publishLocation: 'Container'
-
-  # =========================================================================
-  # STAGE 4: Infrastructure CD — Phase 2 (AKS & Rest of App Resources)
-  # Provisions AKS, Key Vault, Database, etc. after images are built.
-  # =========================================================================
-  - stage: InfraCD_App
-    displayName: '🏗️  Stage 4 — Infra CD (App)'
-    dependsOn: Build
-    condition: succeeded()
-    jobs:
-      - job: terraform_app
-        displayName: 'Terraform Provision App Resources'
+      - job: terraform_run
+        displayName: 'Terraform Provision All Resources'
         pool:
           vmImage: 'ubuntu-latest'
         steps:
@@ -571,10 +275,11 @@ stages:
                   -backend-config="key=$(TF_BACKEND_KEY)" \
                   -reconfigure
 
-                terraform plan -out=tfplan_app -input=false
+                terraform plan -out=tfplan -input=false
 
+                # Only apply on direct merges/pushes to branch, plan on PRs
                 if [ "$(Build.Reason)" != "PullRequest" ]; then
-                  terraform apply -auto-approve tfplan_app
+                  terraform apply -auto-approve tfplan
                   
                   AKS_CLUSTER_NAME=$(terraform output -raw aks_cluster_name)
                   RESOURCE_GROUP=$(terraform output -raw resource_group_name)
@@ -592,25 +297,182 @@ stages:
                 else
                   echo "Skipping apply on Pull Request"
                 fi
-            name: tf_app_outputs
+            name: tf_outputs
 
   # =========================================================================
-  # STAGE 5: Application Deployment (Azure commits only, protected Environment)
+  # STAGE 3: Build & Package (PRs and azure)
+  # Builds Docker images, scans them for vulnerabilities, and pushes to ACR.
+  # Publishes configuration blueprints as Pipeline Artifacts.
+  # =========================================================================
+  - stage: Build
+    displayName: '🐳 Stage 3 — Build & Vulnerability Scan'
+    dependsOn: InfraCD
+    condition: succeeded()
+    variables:
+      ACR_LOGIN_SERVER_OUT: $[ stageDependencies.InfraCD.terraform_run.outputs['tf_outputs.ACR_LOGIN_SERVER'] ]
+    jobs:
+      - job: build_and_package
+        displayName: 'Build, Scan & Package Application'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Authenticate to ACR'
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+                ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_OUT)"
+                if [ -z "$ACR_LOGIN_SERVER" ] || [[ "$ACR_LOGIN_SERVER" == \$* ]]; then
+                  ACR_LOGIN_SERVER=$(az acr list \
+                    --resource-group "$(TF_BACKEND_RESOURCE_GROUP)" \
+                    --query "[?contains(name,'atomic')].loginServer | [0]" \
+                    --output tsv 2>/dev/null || echo "")
+                fi
+                if [ -n "$ACR_LOGIN_SERVER" ]; then
+                  ACR_NAME=$(echo $ACR_LOGIN_SERVER | cut -d. -f1)
+                  echo "Logging into ACR: $ACR_NAME"
+                  az acr login --name "$ACR_NAME"
+                  echo "##vso[task.setvariable variable=ACR_LOGIN_SERVER_RESOLVED]$ACR_LOGIN_SERVER"
+                else
+                  echo "##[warning] ACR not yet provisioned. Skipping registry login."
+                  echo "##vso[task.setvariable variable=ACR_LOGIN_SERVER_RESOLVED]placeholder.azurecr.io"
+                fi
+
+          - task: AzureCLI@2
+            displayName: 'Build Backend Docker Image'
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+                ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_RESOLVED)"
+                
+                export DOCKER_BUILDKIT=1
+                docker build \
+                  --build-arg BUILDKIT_INLINE_CACHE=1 \
+                  --cache-from "$ACR_LOGIN_SERVER/backend:latest" \
+                  -t "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)" \
+                  -t "$ACR_LOGIN_SERVER/backend:latest" \
+                  -f "$(Build.SourcesDirectory)/ATOMIC-Backend/Dockerfile" \
+                  "$(Build.SourcesDirectory)/ATOMIC-Backend"
+
+          - task: AzureCLI@2
+            displayName: 'Build Frontend Docker Image'
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+                ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_RESOLVED)"
+                
+                echo "VITE_API_BASE_URL=/" > "$(Build.SourcesDirectory)/ATOMIC-Frontend/.env.production"
+                
+                export DOCKER_BUILDKIT=1
+                docker build \
+                  --build-arg VITE_API_BASE_URL=/ \
+                  --build-arg BUILDKIT_INLINE_CACHE=1 \
+                  --cache-from "$ACR_LOGIN_SERVER/frontend:latest" \
+                  -t "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)" \
+                  -t "$ACR_LOGIN_SERVER/frontend:latest" \
+                  -f "$(Build.SourcesDirectory)/ATOMIC-Frontend/Dockerfile" \
+                  "$(Build.SourcesDirectory)/ATOMIC-Frontend"
+
+          - script: |
+              set -euo pipefail
+              mkdir -p $(Agent.TempDirectory)/bin
+              curl -L -s -S -o trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.71.2/trivy_0.71.2_Linux-64bit.tar.gz
+              tar -xzf trivy.tar.gz -C $(Agent.TempDirectory)/bin trivy
+              echo "##vso[task.prependpath]$(Agent.TempDirectory)/bin"
+            displayName: 'Install Trivy Scanner'
+
+          - task: Cache@2
+            displayName: 'Cache Trivy Vulnerability Database'
+            inputs:
+              key: 'trivy | "$(Agent.OS)"'
+              restoreKeys: |
+                trivy
+              path: '$(HOME)/.cache/trivy'
+
+          - script: |
+              set -euo pipefail
+              ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_RESOLVED)"
+              echo "Scanning built Backend image..."
+              trivy image --severity HIGH,CRITICAL --exit-code 0 "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)"
+            displayName: 'Trivy: Scan Backend Image for Vulnerabilities'
+
+          - script: |
+              set -euo pipefail
+              ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_RESOLVED)"
+              echo "Scanning built Frontend image..."
+              trivy image --severity HIGH,CRITICAL --exit-code 0 "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)"
+            displayName: 'Trivy: Scan Frontend Image for Vulnerabilities'
+
+          - task: AzureCLI@2
+            displayName: 'Push Backend Image to ACR'
+            condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+                ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_RESOLVED)"
+                docker push "$ACR_LOGIN_SERVER/backend:$(Build.SourceVersion)"
+                docker push "$ACR_LOGIN_SERVER/backend:latest"
+                echo "✅ Backend image successfully pushed"
+
+          - task: AzureCLI@2
+            displayName: 'Push Frontend Image to ACR'
+            condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+            inputs:
+              azureSubscription: '$(SERVICE_CONNECTION)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -euo pipefail
+                ACR_LOGIN_SERVER="$(ACR_LOGIN_SERVER_RESOLVED)"
+                docker push "$ACR_LOGIN_SERVER/frontend:$(Build.SourceVersion)"
+                docker push "$ACR_LOGIN_SERVER/frontend:latest"
+                echo "✅ Frontend image successfully pushed"
+
+          - task: CopyFiles@2
+            displayName: 'Collect Terraform & Kubernetes Blueprints'
+            inputs:
+              SourceFolder: '$(Build.SourcesDirectory)'
+              Contents: |
+                terraform/**
+                k8s/**
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Blueprints Artifact'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'deployment-assets'
+              publishLocation: 'Container'
+
+  # =========================================================================
+  # STAGE 4: Application Deployment (Azure commits only, protected Environment)
   # Uses ADO Environment gates, injects secrets, checks health, and handles rollbacks.
   # =========================================================================
   - stage: Deploy
-    displayName: '🚀 Stage 5 — Application Deployment'
+    displayName: '🚀 Stage 4 — Application Deployment'
     dependsOn:
-      - InfraCD_App
+      - InfraCD
       - Build
     condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
     variables:
-      AKS_CLUSTER_NAME: $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.AKS_CLUSTER_NAME'] ]
-      RESOURCE_GROUP:   $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.RESOURCE_GROUP'] ]
-      ACR_LOGIN_SERVER: $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.ACR_LOGIN_SERVER'] ]
-      FLEXIBLE_SERVER_FQDN: $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.FLEXIBLE_SERVER_FQDN'] ]
-      KEY_VAULT_URI:    $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.KEY_VAULT_URI'] ]
-      BACKEND_CLIENT_ID:  $[ stageDependencies.InfraCD_App.terraform_app.outputs['tf_app_outputs.BACKEND_CLIENT_ID'] ]
+      AKS_CLUSTER_NAME: $[ stageDependencies.InfraCD.terraform_run.outputs['tf_outputs.AKS_CLUSTER_NAME'] ]
+      RESOURCE_GROUP:   $[ stageDependencies.InfraCD.terraform_run.outputs['tf_outputs.RESOURCE_GROUP'] ]
+      ACR_LOGIN_SERVER: $[ stageDependencies.InfraCD.terraform_run.outputs['tf_outputs.ACR_LOGIN_SERVER'] ]
+      FLEXIBLE_SERVER_FQDN: $[ stageDependencies.InfraCD.terraform_run.outputs['tf_outputs.FLEXIBLE_SERVER_FQDN'] ]
+      KEY_VAULT_URI:    $[ stageDependencies.InfraCD.terraform_run.outputs['tf_outputs.KEY_VAULT_URI'] ]
+      BACKEND_CLIENT_ID:  $[ stageDependencies.InfraCD.terraform_run.outputs['tf_outputs.BACKEND_CLIENT_ID'] ]
     jobs:
       - deployment: deploy_aks
         displayName: 'Deploy to AKS & Verify Health'
@@ -687,7 +549,7 @@ stages:
                       filename=$(basename "$blueprint")
                       # Skip namespace creation as it was already applied
                       if [ "$filename" != "namespace.yaml" ]; then
-                        envsubst < "$blueprint" > "$MANIFEST_STAGE_DIR/$filename"
+                        envsubst '$ACR_LOGIN_SERVER,$IMAGE_TAG,$FLEXIBLE_SERVER_FQDN,$KEY_VAULT_URI,$AZURE_CLIENT_ID' < "$blueprint" > "$MANIFEST_STAGE_DIR/$filename"
                       fi
                     done
 

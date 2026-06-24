@@ -30,8 +30,7 @@ spec:
     metadata:
       labels:
         app: backend
-      annotations:
-        # Required annotation for Azure Workload Identity (REQ-7.5)
+        # Required label for Azure Workload Identity (REQ-7.5)
         # Signals the Workload Identity mutating webhook to inject the
         # AZURE_FEDERATED_TOKEN_FILE environment variable into the container.
         azure.workload.identity/use: "true"
