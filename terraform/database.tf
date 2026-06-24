@@ -90,6 +90,12 @@ resource "azurerm_postgresql_flexible_server" "main" {
     azurerm_private_dns_zone_virtual_network_link.postgres,
     azurerm_key_vault_secret.postgres_password,
   ]
+
+  lifecycle {
+    ignore_changes = [
+      zone,
+    ]
+  }
 }
 
 # ---------------------------------------------------------------------------
