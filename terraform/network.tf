@@ -120,8 +120,8 @@ resource "azurerm_subnet_network_security_group_association" "public" {
 
 # ---------------------------------------------------------------------------
 # NSG — AKS Subnet
-# Denies all inbound traffic from the public internet (REQ-2.2).
-# AKS internal communication is handled via VNet routing (allowed by default).
+# Restricts public inbound traffic to HTTP (80) and HTTPS (443) for the Ingress Controller (REQ-2.2).
+# Denies all other inbound traffic from the public internet to ensure cluster security.
 # ---------------------------------------------------------------------------
 resource "azurerm_network_security_group" "aks" {
   name                = "nsg-aks-${local.name_prefix}"
@@ -130,7 +130,31 @@ resource "azurerm_network_security_group" "aks" {
   tags                = local.common_tags
 
   security_rule {
-    name                       = "deny-internet-inbound"
+    name                       = "allow-http-inbound"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "80"
+    source_address_prefix      = "Internet"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "allow-https-inbound"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "443"
+    source_address_prefix      = "Internet"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "deny-all-other-internet-inbound"
     priority                   = 4000
     direction                  = "Inbound"
     access                     = "Deny"
