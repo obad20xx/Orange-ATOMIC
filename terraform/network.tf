@@ -154,6 +154,18 @@ resource "azurerm_network_security_group" "aks" {
   }
 
   security_rule {
+    name                       = "allow-nodeports-inbound"
+    priority                   = 120
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "30000-32767"
+    source_address_prefix      = "Internet"
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
     name                       = "deny-all-other-internet-inbound"
     priority                   = 4000
     direction                  = "Inbound"
