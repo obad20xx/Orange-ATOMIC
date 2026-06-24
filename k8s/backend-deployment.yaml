@@ -68,6 +68,11 @@ spec:
             - name: tmp-dir
               mountPath: /tmp
 
+          # Environment variables (runtime secret mappings)
+          env:
+            - name: SPRING_DATASOURCE_PASSWORD
+              value: "${postgres-password}"
+
           # Environment variables from ConfigMap (non-secret values)
           envFrom:
             - configMapRef:

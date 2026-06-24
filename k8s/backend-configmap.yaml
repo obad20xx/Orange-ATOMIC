@@ -29,11 +29,6 @@ data:
   # Spring datasource username — the PostgreSQL admin login (non-secret)
   SPRING_DATASOURCE_USERNAME: "atomicadmin"
 
-  # Spring datasource password — fetched from Key Vault (REQ-7.4)
-  # trivy:ignore:AVD-KSV-0109
-  # trivy:ignore:KSV-0109
-  SPRING_DATASOURCE_PASSWORD: "${postgres-password}"
-
   # CORS — with Nginx reverse proxy, origins are always same-origin
   CORS_ALLOWED_ORIGINS: "*"
 
